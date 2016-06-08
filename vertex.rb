@@ -18,17 +18,17 @@ class Vertices
 
   def attach_to_face(face_id, v1, v2, v3)
     raise "vertex #{v1} already on face #{face_id}" if @vertices[v1][:faces].include?(face_id)
-    @vertices[v1][:faces] << face_id
+    @vertices[v1][:faces] << [v2, v3].sort
     @vertices[v1][:associated_vertices] << v2 unless @vertices[v1][:associated_vertices].include?(v2)
     @vertices[v1][:associated_vertices] << v3 unless @vertices[v1][:associated_vertices].include?(v3)
 
     raise "vertex #{v1} already on face #{face_id}" if @vertices[v2][:faces].include?(face_id)
-    @vertices[v2][:faces] << face_id
+    @vertices[v2][:faces] << [v1, v3].sort
     @vertices[v2][:associated_vertices] << v1 unless @vertices[v2][:associated_vertices].include?(v1)
     @vertices[v2][:associated_vertices] << v3 unless @vertices[v2][:associated_vertices].include?(v3)
 
     raise "vertex #{v1} already on face #{face_id}" if @vertices[v3][:faces].include?(face_id)
-    @vertices[v3][:faces] << face_id
+    @vertices[v3][:faces] << [v1, v2].sort
     @vertices[v3][:associated_vertices] << v2 unless @vertices[v3][:associated_vertices].include?(v2)
     @vertices[v3][:associated_vertices] << v1 unless @vertices[v3][:associated_vertices].include?(v1)
   end
@@ -43,15 +43,13 @@ class Vertices
     @vertices.delete id
   end
 
-  def delete_face(vertices_ids, face_id)
-    vertices_ids.each do |vertex_id|
-      faces = @vertices[vertex_id][:faces]
-      if faces.include?(face_id)
-        faces.delete(face_id)
-      else
-        raise "vertex #{vertex_id} is not on face #{face_id}"
-      end
-    end
+  def delete_face(v1, v2, v3)
+    raise "vertex #{v1} is not on face #{[v2, v3]}" unless @vertices[v1][:faces].include? [v2, v3].sort
+    @vertices[v1][:faces].delete [v2, v3].sort
+    raise "vertex #{v2} is not on face #{[v1, v3]}" unless @vertices[v2][:faces].include? [v1, v3].sort
+    @vertices[v2][:faces].delete [v1, v3].sort
+    raise "vertex #{v3} is not on face #{[v2, v1]}" unless @vertices[v3][:faces].include? [v2, v1].sort
+    @vertices[v3][:faces].delete [v2, v1].sort
   end
 
   def delete_line(v1, v2)
@@ -62,7 +60,7 @@ class Vertices
     @vertices[v2][:associated_vertices].delete v1
   end
 
-  def get_associated_face_ids(id)
+  def get_associated_face_vertices(id)
     raise "no such vertex #{id}" unless @vertices[id]
     @vertices[id][:faces]
   end
@@ -72,11 +70,21 @@ class Vertices
     @vertices[id][:associated_vertices]
   end
 
-  def modify_face(fid, src, dst)
-    raise "vertex #{src} is not on face #{fid}" unless @vertices[src][:faces].include?(fid)
-    @vertices[src][:faces].delete fid
-    raise "vertex #{dst} is on face #{fid}" if @vertices[dst][:faces].include?(fid)
-    @vertices[dst][:faces] << fid
+  def modify_face(v1, v2, src, dst)
+    raise "vertex #{src} is not on face #{[v1, v2]}" unless @vertices[src][:faces].include?([v1, v2].sort)
+    @vertices[src][:faces].delete [v1, v2].sort
+    raise "vertex #{dst} is on face #{[v1, v2]}" if @vertices[dst][:faces].include?([v1, v2].sort)
+    @vertices[dst][:faces] << [v1, v2].sort
+
+    raise "vertex #{v1} is not on face #{[src, v2]}" unless @vertices[v1][:faces].include?([src, v2].sort)
+    @vertices[v1][:faces].delete [v2, src].sort
+    raise "vertex #{v1} is on face #{[dst, v2]}" if @vertices[v1][:faces].include?([dst, v2].sort)
+    @vertices[v1][:faces] << [v2, dst].sort
+
+    raise "vertex #{v2} is not on face #{[v1, src]}" unless @vertices[v2][:faces].include?([v1, src].sort)
+    @vertices[v2][:faces].delete [v1, src].sort
+    raise "vertex #{v2} is on face #{[v1, dst]}" if @vertices[v2][:faces].include?([v1, dst].sort)
+    @vertices[v2][:faces] << [v1, dst].sort
   end
 
   def modify_line(v1, src, dst)
@@ -112,7 +120,7 @@ class Vertices
   def dump_to_s
     str = "vertices\n"
     @vertices.each do |id, v|
-      str += "vertex #{id}, faces: #{v[:faces].sort.join(' ')}\n\tassociated: #{v[:associated_vertices].sort.join(' ')}\n"
+      str += "vertex #{id}, faces: #{v[:faces].map{ |x,y| "[#{x}, #{y}]" }.join(' ')}\n\tassociated: #{v[:associated_vertices].sort.join(' ')}\n"
     end
     str
   end
@@ -211,37 +219,49 @@ class Faces
   end
 
   def add_face(v1, v2, v3)
-    @faces[@current_index] = { vertices: [v1, v2, v3] }
-    @current_index += 1
-    @current_index - 1
+    vs = [v1, v2, v3].sort
+    @faces[vs[0]] = {} unless @faces[vs[0]]
+    @faces[vs[0]][vs[1]] = {} unless @faces[vs[0]][vs[1]]
+    @faces[vs[0]][vs[1]][vs[2]] = { vertices: vs }
   end
 
-  def delete_face(id)
-    raise "trying to delete non-existing face #{id}" unless @faces[id]
-    @faces.delete id
+  def delete_face(v1, v2, v3)
+    vs = [v1, v2, v3].sort
+    raise "trying to delete non-existing face #{[v1, v2, v3]}" unless @faces[vs[0]] && @faces[vs[0]][vs[1]] && @faces[vs[0]][vs[1]][vs[2]]
+    ret = @faces[vs[0]][vs[1]].delete vs[2]
+    @faces[vs[0]].delete vs[1] if @faces[vs[0]][vs[1]].size == 0
+    @faces.delete vs[0] if @faces[vs[0]].size == 0
+    ret
   end
 
-  def get_vertices(id)
-    raise "trying to get non-existing face #{id}" unless @faces[id]
-    @faces[id][:vertices]
+  def modify_face(v1, v2, src, dst)
+    face = delete_face(v1, v2, src)
+    face[:vertices].delete src
+    if face[:vertices].include?(dst)
+      raise "trying to add existing vertex #{src} on face #{[v1, v2, src]}"
+    end
+    face[:vertices] << dst
+    add_face(*face[:vertices])
   end
 
-  def modify_face(id, src, dst)
-    raise "trying to modify non-existing face #{id}" unless @faces[id]
-    raise "trying to remove non-existing vertex #{src} on face #{id}" unless @faces[id][:vertices].include?(src)
-    @faces[id][:vertices].delete src
-    raise "trying to add existing vertex #{src} on face #{id}" if @faces[id][:vertices].include?(dst)
-    @faces[id][:vertices] << dst
+  def each_face(&block)
+    raise 'no block given' unless block
+    @faces.each do |v1, v|
+      v.each do |v2, vv|
+        vv.each do |v3, face|
+          block.call(v1, v2, v3, face)
+        end
+      end
+    end
   end
 
   def to_obj(v_mappings)
     str = ''
     total_size = @faces.size
     i = 0
-    @faces.each do |_id, face|
-      v1, v2, v3 = face[:vertices].to_a
+    each_face do |v1, v2, v3, face|
       puts "f #{v1} #{v2} #{v3}" if VERBOSE > V_NORMAL
-      str += "f #{face[:vertices].to_a.map { |x| v_mappings[x] ? v_mappings[x] + 1 : (raise "no mapping #{x}") }.join(' ')}\n"
+      str += "f #{face[:vertices].map { |x| v_mappings[x] ? v_mappings[x] + 1 : (raise "no mapping #{x}") }.join(' ')}\n"
       puts "formatting faces #{(100.0 * i / total_size).round(2)}%" if i == (total_size * 0.01).round && VERBOSE >= V_NORMAL
       i += 1
     end
@@ -250,10 +270,18 @@ class Faces
   end
   def dump_to_s
     str = "faces\n"
-    @faces.each do |id, f|
-      str += "\tf #{id}, vertices: #{f[:vertices].sort.join(' ')}\n"
+    each_face do |_v1, _v2, _v3, f|
+      str += "\tface #{f[:vertices].sort.join(' ')}\n"
     end
     str
+  end
+
+  def get(v1, v2, v3)
+    vs = [v1, v2, v3].sort
+    unless @faces[vs[0]] && @faces[vs[0]][vs[1]] && @faces[vs[0]][vs[1]][vs[2]]
+      raise "trying to get non-existing face #{[v1, v2, v3]}"
+    end
+    @faces[vs[0]][vs[1]][vs[2]]
   end
 end
 
@@ -286,20 +314,20 @@ class ObjectManager
     puts "\nmerging #{src} -> #{dst}" if VERBOSE >= V_NORMAL
     # modify and delete faces
     faces_that_has_changed = []
-    f1 = @vertices.get_associated_face_ids(src)
-    f2 = @vertices.get_associated_face_ids(dst)
+    f1 = @vertices.get_associated_face_vertices(src).map { |x| (x + [src]).sort }
+    f2 = @vertices.get_associated_face_vertices(dst).map { |x| (x + [dst]).sort }
     faces_to_delete = f1 & f2
     faces_to_modify = f1 - f2
     faces_that_has_changed = faces_to_modify
     # after here, f1, f2 are invalid
-    faces_to_delete.each do |fid|
-      vs = @faces.get_vertices(fid)
-      @faces.delete_face(fid)
-      @vertices.delete_face(vs, fid)
+    faces_to_delete.each do |vs|
+      @faces.delete_face(*vs)
+      @vertices.delete_face(*vs)
     end
-    faces_to_modify.each do |fid|
-      @faces.modify_face(fid, src, dst)
-      @vertices.modify_face(fid, src, dst)
+    faces_to_modify.each do |vs|
+      raise 'parameter error' unless vs.include?(src)
+      @faces.modify_face(*(vs-[src]), src, dst)
+      @vertices.modify_face(*(vs-[src]), src, dst)
     end
 
     # modify and delete lines
