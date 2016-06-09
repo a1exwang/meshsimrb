@@ -33,7 +33,7 @@ class Vertices
     @vertices[v3][:associated_vertices] << v1 unless @vertices[v3][:associated_vertices].include?(v1)
   end
 
-  def get(id)
+  def get_vec(id)
     raise "no such vertex #{id}" unless @vertices[id]
     @vertices[id][:vector]
   end
@@ -70,23 +70,29 @@ class Vertices
     @vertices[id][:associated_vertices]
   end
 
-  def modify_face(v1, v2, src, dst)
+  # change face [v1, v2, src] -> [v1, v2, dst]
+  # if [v1, v2, dst] exists, delete face [v1, v2, src] and returns false
+  def modify_face!(v1, v2, src, dst)
     raise "vertex #{src} is not on face #{[v1, v2]}" unless @vertices[src][:faces].include?([v1, v2].sort)
     @vertices[src][:faces].delete [v1, v2].sort
-    raise "vertex #{dst} is on face #{[v1, v2]}" if @vertices[dst][:faces].include?([v1, v2].sort)
-    @vertices[dst][:faces] << [v1, v2].sort
-
     raise "vertex #{v1} is not on face #{[src, v2]}" unless @vertices[v1][:faces].include?([src, v2].sort)
     @vertices[v1][:faces].delete [v2, src].sort
-    raise "vertex #{v1} is on face #{[dst, v2]}" if @vertices[v1][:faces].include?([dst, v2].sort)
-    @vertices[v1][:faces] << [v2, dst].sort
-
     raise "vertex #{v2} is not on face #{[v1, src]}" unless @vertices[v2][:faces].include?([v1, src].sort)
     @vertices[v2][:faces].delete [v1, src].sort
-    raise "vertex #{v2} is on face #{[v1, dst]}" if @vertices[v2][:faces].include?([v1, dst].sort)
-    @vertices[v2][:faces] << [v1, dst].sort
+
+    if @vertices[dst][:faces].include?([v1, v2].sort)
+      nil
+    else
+      @vertices[dst][:faces] << [v1, v2].sort
+      raise "vertex #{v1} is on face #{[dst, v2]}" if @vertices[v1][:faces].include?([dst, v2].sort)
+      @vertices[v1][:faces] << [v2, dst].sort
+      raise "vertex #{v2} is on face #{[v1, dst]}" if @vertices[v2][:faces].include?([v1, dst].sort)
+      @vertices[v2][:faces] << [v1, dst].sort
+      [v1, v2, dst]
+    end
   end
 
+  # raise ArgumentError if v1-dst exists
   def modify_line(v1, src, dst)
     raise "vertex #{src} is not associated with #{v1}" unless @vertices[src][:associated_vertices].include?(v1)
     @vertices[v1][:associated_vertices].delete src
@@ -105,14 +111,15 @@ class Vertices
     v_mappings = {}
     total_size = @vertices.size
     i = 0
+    stepping_index = (0.1 * total_size).round
     @vertices.each do |id, v|
       v_mappings[id] = v_index
       v_index += 1
       str += "v #{v[:vector].to_a.map { |x| x.to_s }.join(' ')}\n"
-      puts "formatting vertices #{(100.0 * i / total_size).round(2)}%..." if i == (0.01*total_size).round && VERBOSE >= V_NORMAL
+      puts "formatting vertices #{(100.0 * i / total_size).round(2)}%..." if i % stepping_index == 0 && VERBOSE >= V_NORMAL
       i += 1
     end
-    puts 'formatting vertices done' if VERBOSE >= V_NORMAL
+    puts "formatting vertices done\n\n" if VERBOSE >= V_NORMAL
     str += "\n"
     [str, v_mappings]
   end
@@ -125,6 +132,14 @@ class Vertices
     str
   end
 
+  def calculate_kp(v1, v2, v3)
+    vec1, vec2, vec3 = *[v1, v2, v3].map { |x| get_vec(x) }
+    n = (vec1 - vec2).cross(vec1 - vec3)
+    raise "#{[vec1, vec2, vec3]} cannot make a face" if n.r == 0
+    nn = n.normalize
+    p = Matrix[[nn[0]], [nn[1]], [nn[2]], [-nn.dot(vec1)]]
+    p * p.t
+  end
 end
 
 class Lines
@@ -203,6 +218,10 @@ class Lines
     str
   end
 
+  def set_delta!(v1, v2, delta)
+    get(v1, v2)[:delta] = delta
+  end
+
   private
   def get(v1, v2)
     v1, v2 = v2, v1 if v1 > v2
@@ -213,6 +232,10 @@ class Lines
 end
 
 class Faces
+  def self.check(v1, v2, v3, u1, u2, u3)
+    [v1, v2, v3].sort == [u1, u2, u3].sort
+  end
+
   def initialize
     @faces = {}
     @current_index = 0
@@ -222,10 +245,11 @@ class Faces
     vs = [v1, v2, v3].sort
     @faces[vs[0]] = {} unless @faces[vs[0]]
     @faces[vs[0]][vs[1]] = {} unless @faces[vs[0]][vs[1]]
-    @faces[vs[0]][vs[1]][vs[2]] = { vertices: vs }
+    raise ArgumentError, "trying to add existing face #{vs}" if @faces[vs[0]][vs[1]][vs[2]]
+    @faces[vs[0]][vs[1]][vs[2]] = { vertices: [v1, v2, v3] }
   end
 
-  def delete_face(v1, v2, v3)
+  def delete_face!(v1, v2, v3)
     vs = [v1, v2, v3].sort
     raise "trying to delete non-existing face #{[v1, v2, v3]}" unless @faces[vs[0]] && @faces[vs[0]][vs[1]] && @faces[vs[0]][vs[1]][vs[2]]
     ret = @faces[vs[0]][vs[1]].delete vs[2]
@@ -234,14 +258,18 @@ class Faces
     ret
   end
 
-  def modify_face(v1, v2, src, dst)
-    face = delete_face(v1, v2, src)
-    face[:vertices].delete src
+  def modify_face!(v1, v2, src, dst)
+    face = delete_face!(v1, v2, src)
+
     if face[:vertices].include?(dst)
       raise "trying to add existing vertex #{src} on face #{[v1, v2, src]}"
     end
-    face[:vertices] << dst
-    add_face(*face[:vertices])
+    face[:vertices].map! { |x| x == src ? dst : x }
+    begin
+      add_face(*face[:vertices])
+    rescue ArgumentError => e
+      puts e if VERBOSE >= V_VERBOSE
+    end
   end
 
   def each_face(&block)
@@ -257,16 +285,18 @@ class Faces
 
   def to_obj(v_mappings)
     str = ''
-    total_size = @faces.size
+    total_size = 0
+    each_face { total_size += 1 }
     i = 0
+    stepping_index = (total_size * 0.1).round
     each_face do |v1, v2, v3, face|
       puts "f #{v1} #{v2} #{v3}" if VERBOSE > V_NORMAL
       str += "f #{face[:vertices].map { |x| v_mappings[x] ? v_mappings[x] + 1 : (raise "no mapping #{x}") }.join(' ')}\n"
-      puts "formatting faces #{(100.0 * i / total_size).round(2)}%" if i == (total_size * 0.01).round && VERBOSE >= V_NORMAL
+      puts "formatting faces #{(100.0 * i / total_size).round(2)}%" if i % stepping_index == 0  && VERBOSE >= V_NORMAL
       i += 1
     end
-    puts 'formatting faces done' if VERBOSE >= V_NORMAL
-    str
+    puts "formatting faces done\n\n" if VERBOSE >= V_NORMAL
+    [str, i]
   end
   def dump_to_s
     str = "faces\n"
@@ -283,9 +313,32 @@ class Faces
     end
     @faces[vs[0]][vs[1]][vs[2]]
   end
+
+  def recalculate_kp!(vertices, v1, v2, v3)
+    get(v1, v2, v3)[:kp] = vertices.calculate_kp(v1, v2, v3)
+  end
+
+  def kp(v1, v2, v3)
+    ret = get(v1, v2, v3)[:kp]
+    raise "kp for #{[v1, v2, v3]} has never calculated!" unless ret
+    ret
+  end
 end
 
 class ObjectManager
+  def delta(src_id, dst_id)
+    dst_vertex = @vertices.get_vec(dst_id)
+
+    # 三维行向量变成四维行向量
+    matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
+
+    faces = @vertices.get_associated_face_vertices(src_id)
+    sum_of_kps = Matrix.zero(4, 4)
+    faces.each do |v1, v2|
+      sum_of_kps += @faces.kp(v1, v2, src_id)
+    end
+    (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
+  end
   def initialize(file_path)
     @vertices = Vertices.new
     @lines = Lines.new
@@ -308,26 +361,36 @@ class ObjectManager
           @vertices.attach_to_face(face_id, *vs)
       end
     end
+
+    @faces.each_face do |v1, v2, v3, _|
+      @faces.recalculate_kp!(@vertices, v1, v2, v3)
+    end
+    @lines.each_line do |v1, v2, _|
+      @lines.set_delta!(v1, v2, delta(v1, v2))
+    end
   end
 
   def merge_vertex(src, dst)
-    puts "\nmerging #{src} -> #{dst}" if VERBOSE >= V_NORMAL
+    puts "merging #{src} -> #{dst}\n\n" if VERBOSE >= V_NORMAL
     # modify and delete faces
-    faces_that_has_changed = []
     f1 = @vertices.get_associated_face_vertices(src).map { |x| (x + [src]).sort }
     f2 = @vertices.get_associated_face_vertices(dst).map { |x| (x + [dst]).sort }
     faces_to_delete = f1 & f2
     faces_to_modify = f1 - f2
-    faces_that_has_changed = faces_to_modify
+    faces_that_has_changed = []
     # after here, f1, f2 are invalid
     faces_to_delete.each do |vs|
-      @faces.delete_face(*vs)
+      @faces.delete_face!(*vs)
       @vertices.delete_face(*vs)
     end
     faces_to_modify.each do |vs|
       raise 'parameter error' unless vs.include?(src)
-      @faces.modify_face(*(vs-[src]), src, dst)
-      @vertices.modify_face(*(vs-[src]), src, dst)
+      new_face = @vertices.modify_face!(*(vs-[src]), src, dst)
+      @faces.modify_face!(*(vs-[src]), src, dst)
+      faces_that_has_changed << new_face if new_face
+    end
+    faces_that_has_changed.each do |vs|
+      @faces.recalculate_kp!(@vertices, *vs)
     end
 
     # modify and delete lines
@@ -340,10 +403,14 @@ class ObjectManager
       @lines.modify_line(v2, src, dst)
       begin
         @vertices.modify_line(v2, src, dst)
+        lines_that_has_changed << [v2, dst]
       rescue ArgumentError => e
         puts e if VERBOSE > V_NORMAL
       end
-      lines_that_has_changed << [v2, dst]
+    end
+    lines_that_has_changed.each do |v1, v2|
+      @lines.set_delta!(v1, v2, delta(v1, v2))
+      puts "recalculated delta for #{[v1, v2]}" if VERBOSE >= V_NORMAL
     end
 
     @lines.delete_line(src, dst)
@@ -358,7 +425,9 @@ class ObjectManager
 
   def write_to_file(file_path)
     vertices_str, v_mappings = @vertices.to_obj
-    faces_str = @faces.to_obj(v_mappings)
+    puts "vertices: #{v_mappings.size}"
+    faces_str, face_count = @faces.to_obj(v_mappings)
+    puts "faces: #{face_count}"
     File.write(file_path, vertices_str + faces_str)
   end
 
@@ -369,14 +438,15 @@ class ObjectManager
   end
 end
 
-obj = ObjectManager.new('test_data/cube.obj')
+obj = ObjectManager.new('test_data/dinosaur.2k.obj')
 
-obj.dump_print
+# obj.dump_print
 
-5.times do
+1000.times do
   v1, v2 = obj.get_a_line
   obj.merge_vertex(v1, v2)
-  obj.dump_print
+  # obj.dump_print
+  puts
 end
 
 obj.write_to_file('a.obj')
