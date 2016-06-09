@@ -3,6 +3,8 @@ require 'mkmf'
 
 # Give it a name
 extension_name = 'fast_4d_matrix'
+append_cflags('-std=c99')
+append_cflags('-Wno-declaration-after-statement')
 
 # The destination
 dir_config(extension_name)
