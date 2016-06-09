@@ -1,325 +1,526 @@
-require 'pp'
 require 'matrix'
-require 'algorithms'
+require 'set'
+require_relative 'deletable_heap'
 
-@vertices = {}
-@faces = {}
-@lines = {}
-@line_count = 0
+V_DBG = 10
+V_VERBOSE = 5
+V_NORMAL = 1
+V_SILENT = 0
 
-@verbose = true
+VERBOSE = V_SILENT
 
-def dump_print
-  puts 'vertices'
-  pp @vertices.map { |k, v| { id: k, faces: v[:faces], other_vertices: v[:other_vertices] } }
-  puts 'faces:'
-  pp @faces.map { |k, v| [k, v[:vertices]]}
-  # puts 'lines:'
-  # pp @lines
-  # puts "line count: #{line_count}"
-  puts
-end
-
-def get_vertex(id)
-  @vertices[id]
-end
-
-def get_face_ids_by_vertex(id)
-  @vertices[id][:faces].dup
-end
-
-def get_other_vertex_ids(id)
-  @vertices[id][:other_vertices].dup
-end
-
-def get_face(id)
-  @faces[id]
-end
-
-def get_kp(id)
-  @faces[id][:kp]
-end
-
-def get_line(v1, v2)
-  v1, v2 = v2, v1 if v1 > v2
-  @lines[v1][v2]
-end
-
-def add_vertex(id, vertex)
-  @vertices[id] = vertex
-end
-
-def add_face(face)
-  id = @faces.keys.size
-  @faces[id] = face
-  id
-end
-
-def create_line(i1, i2)
-  put_line(i1, i2, vertices: [i1, i2])
-  @line_count += 1
-  get_vertex(i1)[:other_vertices] << i2 unless get_vertex(i1)[:other_vertices].include?(i2)
-  get_vertex(i2)[:other_vertices] << i1 unless get_vertex(i2)[:other_vertices].include?(i1)
-end
-
-def put_line(i1, i2, line)
-  i1, i2 = i2, i1 if i1 > i2
-  @lines[i1] = {} unless @lines[i1]
-  @lines[i1][i2] = line
-end
-
-def remove_vertex(id)
-  @vertices.delete id
-end
-def remove_line(v1, v2)
-  v1, v2 = v2, v1 if v1 > v2
-  if get_vertex(v1)
-    get_vertex(v1)[:other_vertices].delete v2
-    puts "deleting line other vertex #{v2} from vertex #{v1}" if @verbose
-  end
-  if get_vertex(v2)
-    get_vertex(v2)[:other_vertices].delete v1
-    puts "deleting line other vertex #{v2} from vertex #{v1}" if @verbose
+class Vertices
+  def initialize
+    @vertices = {}
   end
 
-  raise "removing non-existing line #{v1}-#{v2}" unless @lines[v1] && @lines[v1][v2]
-
-  line = @lines[v1][v2]
-  line[:deleted] = true
-  @lines[v1].delete v2
-  if @lines[v1].size == 0
-    @lines.delete v1
-  end
-  @line_count -= 1
-end
-def remove_face(id)
-  face = get_face(id)
-  face[:vertices].each do |v|
-    puts "deleting face #{id} from vertex #{v}" if @verbose
-    vt = get_vertex(v)
-    unless vt
-      raise 'vertex on face is nil'
-    end
-    vt[:faces].delete id # if get_vertex(v)
+  def add_vertex(id, vector)
+    @vertices[id] = { vector: vector, faces: [], associated_vertices: [] }
   end
 
-  @faces.delete id
-end
+  def attach_to_face(face_id, v1, v2, v3)
+    raise "vertex #{v1} already on face #{face_id}" if @vertices[v1][:faces].include?(face_id)
+    @vertices[v1][:faces] << [v2, v3].sort
+    @vertices[v1][:associated_vertices] << v2 unless @vertices[v1][:associated_vertices].include?(v2)
+    @vertices[v1][:associated_vertices] << v3 unless @vertices[v1][:associated_vertices].include?(v3)
 
-def each_line(&block)
-  index = 0
-  @lines.each do |i1, v|
-    v.each do |i2, line|
-      block.call(i1, i2, line, index)
-      index += 1
+    raise "vertex #{v1} already on face #{face_id}" if @vertices[v2][:faces].include?(face_id)
+    @vertices[v2][:faces] << [v1, v3].sort
+    @vertices[v2][:associated_vertices] << v1 unless @vertices[v2][:associated_vertices].include?(v1)
+    @vertices[v2][:associated_vertices] << v3 unless @vertices[v2][:associated_vertices].include?(v3)
+
+    raise "vertex #{v1} already on face #{face_id}" if @vertices[v3][:faces].include?(face_id)
+    @vertices[v3][:faces] << [v1, v2].sort
+    @vertices[v3][:associated_vertices] << v2 unless @vertices[v3][:associated_vertices].include?(v2)
+    @vertices[v3][:associated_vertices] << v1 unless @vertices[v3][:associated_vertices].include?(v1)
+  end
+
+  def get_vec(id)
+    raise "no such vertex #{id}" unless @vertices[id]
+    @vertices[id][:vector]
+  end
+
+  def delete(id)
+    raise "no such vertex #{id}" unless @vertices[id]
+    @vertices.delete id
+  end
+
+  def delete_face(v1, v2, v3)
+    raise "vertex #{v1} is not on face #{[v2, v3]}" unless @vertices[v1][:faces].include? [v2, v3].sort
+    @vertices[v1][:faces].delete [v2, v3].sort
+    raise "vertex #{v2} is not on face #{[v1, v3]}" unless @vertices[v2][:faces].include? [v1, v3].sort
+    @vertices[v2][:faces].delete [v1, v3].sort
+    raise "vertex #{v3} is not on face #{[v2, v1]}" unless @vertices[v3][:faces].include? [v2, v1].sort
+    @vertices[v3][:faces].delete [v2, v1].sort
+  end
+
+  def delete_line(v1, v2)
+    raise "data corruption detected, #{v2} is not in #{v1}'s associated list" unless @vertices[v1][:associated_vertices].include?(v2)
+    raise "data corruption detected, #{v1} is not in #{v2}'s associated list" unless @vertices[v2][:associated_vertices].include?(v1)
+
+    @vertices[v1][:associated_vertices].delete v2
+    @vertices[v2][:associated_vertices].delete v1
+  end
+
+  def get_associated_face_vertices(id)
+    raise "no such vertex #{id}" unless @vertices[id]
+    @vertices[id][:faces]
+  end
+
+  def get_associated_vertex_ids(id)
+    raise "no such vertex #{id}" unless @vertices[id]
+    @vertices[id][:associated_vertices]
+  end
+
+  # change face [v1, v2, src] -> [v1, v2, dst]
+  # if [v1, v2, dst] exists, delete face [v1, v2, src] and returns false
+  def modify_face!(v1, v2, src, dst)
+    raise "vertex #{src} is not on face #{[v1, v2]}" unless @vertices[src][:faces].include?([v1, v2].sort)
+    @vertices[src][:faces].delete [v1, v2].sort
+    raise "vertex #{v1} is not on face #{[src, v2]}" unless @vertices[v1][:faces].include?([src, v2].sort)
+    @vertices[v1][:faces].delete [v2, src].sort
+    raise "vertex #{v2} is not on face #{[v1, src]}" unless @vertices[v2][:faces].include?([v1, src].sort)
+    @vertices[v2][:faces].delete [v1, src].sort
+
+    if @vertices[dst][:faces].include?([v1, v2].sort)
+      nil
+    else
+      @vertices[dst][:faces] << [v1, v2].sort
+      raise "vertex #{v1} is on face #{[dst, v2]}" if @vertices[v1][:faces].include?([dst, v2].sort)
+      @vertices[v1][:faces] << [v2, dst].sort
+      raise "vertex #{v2} is on face #{[v1, dst]}" if @vertices[v2][:faces].include?([v1, dst].sort)
+      @vertices[v2][:faces] << [v1, dst].sort
+      [v1, v2, dst]
     end
   end
-end
 
-def line_count
-  @line_count
-end
+  # raise ArgumentError if v1-dst exists
+  def modify_line!(v1, src, dst)
+    raise "vertex #{src} is not associated with #{v1}" unless @vertices[src][:associated_vertices].include?(v1)
+    @vertices[v1][:associated_vertices].delete src
+    raise ArgumentError, "vertex #{dst} is associated with #{v1}" if @vertices[dst][:associated_vertices].include?(v1)
+    @vertices[v1][:associated_vertices] << dst
 
-# i1, i2, i3, vertex id
-# calculate kp matrix
-def kp(i1, i2, i3)
-  v1, v2, v3 = get_vertex(i1), get_vertex(i2), get_vertex(i3)
-  n = (v1[:vector]-v2[:vector]).cross(v1[:vector]-v3[:vector])
-  if n.r == 0
-    Matrix.identity(4)
-  else
+    @vertices[dst][:associated_vertices] << v1
+
+    raise "vertex #{v1} is not associated with #{src}" unless @vertices[src][:associated_vertices].include?(v1)
+    @vertices[src][:associated_vertices].delete v1
+  end
+
+  def delete_associated_vertex!(id, to_delete)
+    raise "vertex #{to_delete} is not associated with #{id}" unless @vertices[to_delete][:associated_vertices].include?(id)
+    @vertices[id][:associated_vertices].delete to_delete
+  end
+
+  def to_obj
+    str = ''
+    v_index = 0
+    v_mappings = {}
+    total_size = @vertices.size
+    i = 0
+    stepping_index = [(0.1 * total_size).round, 1].max
+    @vertices.each do |id, v|
+      v_mappings[id] = v_index
+      v_index += 1
+      str += "v #{v[:vector].to_a.map { |x| x.to_s }.join(' ')}\n"
+      puts "formatting vertices #{(100.0 * i / total_size).round(2)}%..." if i % stepping_index == 0 && VERBOSE >= V_NORMAL
+      i += 1
+    end
+    puts "formatting vertices done\n\n" if VERBOSE >= V_NORMAL
+    str += "\n"
+    [str, v_mappings]
+  end
+
+  def dump_to_s
+    str = "vertices\n"
+    @vertices.each do |id, v|
+      str += "vertex #{id}, faces: #{v[:faces].map{ |x,y| "[#{x}, #{y}]" }.join(' ')}\n\tassociated: #{v[:associated_vertices].sort.join(' ')}\n"
+    end
+    str
+  end
+
+  def calculate_kp(v1, v2, v3)
+    vec1, vec2, vec3 = *[v1, v2, v3].map { |x| get_vec(x) }
+    n = (vec1 - vec2).cross(vec1 - vec3)
+    raise "#{[vec1, vec2, vec3]} cannot make a face" if n.r == 0
     nn = n.normalize
-    p = Matrix[[nn[0]], [nn[1]], [nn[2]], [-nn.dot(v1[:vector])]]
+    p = Matrix[[nn[0]], [nn[1]], [nn[2]], [-nn.dot(vec1)]]
     p * p.t
   end
 end
 
-def delta(line)
-  dst_vertex = get_vertex(line[:vertices].last)[:vector]
-  src_id = line[:vertices].first
-
-  matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
-
-  faces = get_face_ids_by_vertex(src_id)
-  sum_of_kps = Matrix.zero(4, 4)
-  faces.each do |f|
-    sum_of_kps += get_kp(f)
+class Lines
+  def initialize
+    @lines = {}
+    @heap = DeletableHeap.new { |x, y| x[:delta] <=> y[:delta] }
   end
-  (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
-end
-
-# 初始化所有点, 面
-# 点: { vector: Vector[x, y, z], faces: [face_id, ..], lines: [line_id, ..] }
-# 面: { vertices: [v_id, ...], kp: Matrix[] }
-# 线: { vertices: [v_id, ...], delta: 1.0 }
-v_id = 0
-File.read('test_data/dinosaur.2k.obj').split("\n").each do |line|
-  type, *rest = line.split(' ')
-  case type
-    when 'v'
-      add_vertex(v_id, id: v_id, vector: Vector[*(rest.map { |x| x.to_f })], faces: [], other_vertices: [])
-      v_id += 1
-    when 'f'
-      vs = rest.map { |x| x.to_i - 1 }
-      face_id = add_face vertices: vs
-      vs.each { |v| get_vertex(v)[:faces] << face_id }
+  def heap
+    @heap
   end
-end
-
-# initialize lines
-# 所有线, 以id小的点为起点, 防止重复
-@faces.each do |_id, face|
-  i1, i2, i3 = face[:vertices]
-
-  # calc kps
-  face[:kp] = kp(i1, i2, i3)
-
-  create_line(i1, i2)
-  create_line(i1, i3)
-  create_line(i2, i3)
-end
-
-@heap = []
-
-puts "total lines: #{line_count}"
-each_line do |_v1, _v2, line, index|
-  line[:delta] = delta(line)
-  @heap.push(line)
-  puts "current #{index}, #{(100.0*index/line_count).round(2)}%" if index % 300 == 0
-end
-puts 'initialized'
-
-# src-i2 -> tgt-i2
-# tgt[line] << i2
-# i2[line] << tgt
-def modify_line(src, i2, tgt)
-  # change line vertices
-  line = get_line(src, i2)
-  line[:vertices] = [tgt, i2].sort
-  line[:delta] = delta(line)
-
-  # move line index
-  s, e = src > i2 ? [i2, src] : [src, i2]
-  unless @lines[s]
-    puts "@lines[s] is nil, s=#{s}"
-  end
-  @lines[s].delete e
-  put_line(i2, tgt, line)
-
-  # update line index in vertex
-  get_vertex(i2)[:other_vertices].delete src
-  get_vertex(i2)[:other_vertices] << tgt unless get_vertex(i2)[:other_vertices].include?(tgt)
-
-  # move src adjacent to tgt adjacent
-  tgt_adj = get_vertex(tgt)[:other_vertices]
-  src_adj = get_vertex(src)[:other_vertices]
-  (src_adj - tgt_adj).each do |v|
-    next if tgt == v
-    get_vertex(v)[:other_vertices].delete src
-    get_vertex(v)[:other_vertices] << tgt unless get_vertex(v)[:other_vertices].include?(tgt)
-    get_vertex(tgt)[:other_vertices] << v
-  end
-end
-
-def modify_face(face_id, v1, v2)
-  vs = get_face(face_id)[:vertices]
-  vs.each_with_index do |vid, index|
-    vs[index] = v2 if vid == v1
-  end
-  get_vertex(v1)[:faces].delete face_id
-  if get_vertex(v2)[:faces][face_id]
-    raise "vertex #{v2} should not on face #{face_id}"
-  end
-  get_vertex(v2)[:faces] << face_id
-end
-
-def merge_vertex(i1, i2)
-  # merge i1 -> i2
-  raise "vertex #{i1} does not exist" unless get_vertex(i1)
-  raise "vertex #{i2} does not exist" unless get_vertex(i2)
-
-  # update face
-  faces1 = get_face_ids_by_vertex(i1)
-  faces2 = get_face_ids_by_vertex(i2)
-
-  faces_to_delete = faces1 & faces2
-  faces_to_modify = faces1 - faces2
-
-  faces_to_delete.each do |i|
-    remove_face(i)
-    puts "deleting face: #{i}" if @verbose
-  end
-  faces_to_modify.each do |i|
-    puts "modifying face: #{i}. vertex from #{i1} -> #{i2}" if @verbose
-    modify_face(i, i1, i2)
+  def get_delta(v1, v2)
+    get(v1, v2)[:delta]
   end
 
-  # update lines
-  lines_to_modify = get_other_vertex_ids(i1)
-  lines_to_modify.each do |other_id|
-    if other_id == i2
-      puts "removing line #{i1}-#{other_id}" if @verbose
-      remove_line(i1, i2)
-    else
-      puts "modifying line #{i1}-#{other_id} -> #{i2}-#{other_id}" if @verbose
-      modify_line(i1, other_id, i2)
+  # used only for initializing
+  def add_lines_by_face(v1, v2, v3)
+    begin
+      add_line(v1, v2)
+    rescue ArgumentError => e
+      puts e if VERBOSE > V_NORMAL
+    end
+    begin
+      add_line(v1, v3)
+    rescue ArgumentError => e
+      puts e if VERBOSE > V_NORMAL
+    end
+    begin
+      add_line(v3, v2)
+    rescue ArgumentError => e
+      puts e if VERBOSE > V_NORMAL
+    end
+  end
+  # used only for initializing
+  def add_line(v1, v2)
+    raise "two same vertices cannot make a line #{v1}" if v1 == v2
+    v1, v2 = v2, v1 if v1 > v2
+    @lines[v1] = {} unless @lines[v1]
+    raise ArgumentError, "line #{v1}-#{v2} already exist" if @lines[v1][v2]
+    @lines[v1][v2] = { vertices: [v1, v2] }
+  end
+
+  def each_line(&block)
+    raise 'no block given' unless block
+    @lines.each do |v1, v|
+      v.each do |v2, line|
+        block.call(v1, v2, line)
+      end
     end
   end
 
-  remove_vertex(i1)
+  def delete_line(v1, v2)
+    if get(v1, v2)
+      v1, v2 = v2, v1 if v1 > v2
+      ret = @lines[v1].delete v2
+      @heap.delete(ret[:heap_ref])
+      @lines.delete v1 if @lines[v1].size == 0
+      ret
+    else
+      raise "trying to delete non-existing line #{v1}-#{v2}"
+    end
+  end
+
+  def modify_line!(v1, src, dst)
+    # raise "trying to delete non-existing line #{v1}-#{v2}" unless get(v1, src)
+    # s, e = v1 < src ? [v1, src] : [src, v1]
+    # line = @lines[s].delete e
+    # @lines.delete s if @lines[s].size == 0
+    line = delete_line(v1, src)
+    line[:vertices] = [v1, dst]
+    # @heap.delete(line[:heap_ref])
+
+    s, e = v1 < dst ? [v1, dst] : [dst, v1]
+    return nil if @lines[s] && @lines[s][e]
+    line[:heap_ref] = @heap.push(line)
+    @lines[s] = {} unless @lines[s]
+    @lines[s][e] = line
+    [s, e]
+  end
+
+  def select_a_best_line
+    # @lines.first.last.first.last[:vertices]
+    line = @heap.peek
+    line[:vertices]
+  end
+
+  def dump_to_s
+    str = "lines\n"
+    each_line do |v1, v2, l|
+      str += "\t#{v1}-#{v2}\n"
+    end
+    str
+  end
+
+  def set_delta_and_push_to_heap!(v1, v2, delta)
+    line = get(v1, v2)
+    line[:delta] = delta
+    line[:heap_ref] = @heap.push line
+  end
+
+  def update_delta!(v1, v2, delta)
+    line = get(v1, v2)
+    puts "delta unchanged for line #{[v1, v2]}, delta: #{delta}" if delta == line[:delta] && VERBOSE >= V_NORMAL
+
+    @heap.delete(line[:heap_ref])
+    line[:delta] = delta
+    line[:heap_ref] = @heap.push(line)
+  end
+
+  private
+  def get(v1, v2)
+    v1, v2 = v2, v1 if v1 > v2
+    ret = @lines[v1][v2]
+    raise "line #{v1}-#{v2} does not exist" unless ret
+    ret
+  end
 end
 
-# start merging
-face_count = @faces.size
-target_face_count = (face_count * 0.1).to_i
+class Faces
+  attr_reader :count
+  def self.check(v1, v2, v3, u1, u2, u3)
+    [v1, v2, v3].sort == [u1, u2, u3].sort
+  end
+
+  def initialize
+    @faces = {}
+    @count = 0
+  end
+
+  def add_face(v1, v2, v3)
+    vs = [v1, v2, v3].sort
+    @faces[vs[0]] = {} unless @faces[vs[0]]
+    @faces[vs[0]][vs[1]] = {} unless @faces[vs[0]][vs[1]]
+    raise ArgumentError, "trying to add existing face #{vs}" if @faces[vs[0]][vs[1]][vs[2]]
+    @count += 1
+    @faces[vs[0]][vs[1]][vs[2]] = { vertices: [v1, v2, v3] }
+  end
+
+  def delete_face!(v1, v2, v3)
+    vs = [v1, v2, v3].sort
+    raise "trying to delete non-existing face #{[v1, v2, v3]}" unless @faces[vs[0]] && @faces[vs[0]][vs[1]] && @faces[vs[0]][vs[1]][vs[2]]
+    ret = @faces[vs[0]][vs[1]].delete vs[2]
+    @faces[vs[0]].delete vs[1] if @faces[vs[0]][vs[1]].size == 0
+    @faces.delete vs[0] if @faces[vs[0]].size == 0
+    @count -= 1
+    ret
+  end
+
+  def modify_face!(v1, v2, src, dst)
+    face = delete_face!(v1, v2, src)
+
+    if face[:vertices].include?(dst)
+      raise "trying to add existing vertex #{src} on face #{[v1, v2, src]}"
+    end
+    face[:vertices].map! { |x| x == src ? dst : x }
+    begin
+      add_face(*face[:vertices])
+    rescue ArgumentError => e
+      puts e if VERBOSE >= V_VERBOSE
+    end
+  end
+
+  def each_face(&block)
+    raise 'no block given' unless block
+    @faces.each do |v1, v|
+      v.each do |v2, vv|
+        vv.each do |v3, face|
+          block.call(v1, v2, v3, face)
+        end
+      end
+    end
+  end
+
+  def to_obj(v_mappings)
+    str = ''
+    total_size = 0
+    each_face { total_size += 1 }
+    i = 0
+    stepping_index = [(total_size * 0.1).round, 1].max
+    each_face do |v1, v2, v3, face|
+      puts "f #{v1} #{v2} #{v3}" if VERBOSE > V_NORMAL
+      str += "f #{face[:vertices].map { |x| v_mappings[x] ? v_mappings[x] + 1 : (raise "no mapping #{x}") }.join(' ')}\n"
+      puts "formatting faces #{(100.0 * i / total_size).round(2)}%" if i % stepping_index == 0  && VERBOSE >= V_NORMAL
+      i += 1
+    end
+    puts "formatting faces done\n\n" if VERBOSE >= V_NORMAL
+    [str, i]
+  end
+  def dump_to_s
+    str = "faces\n"
+    each_face do |_v1, _v2, _v3, f|
+      str += "\tface #{f[:vertices].sort.join(' ')}\n"
+    end
+    str
+  end
+
+  def get(v1, v2, v3)
+    vs = [v1, v2, v3].sort
+    unless @faces[vs[0]] && @faces[vs[0]][vs[1]] && @faces[vs[0]][vs[1]][vs[2]]
+      raise "trying to get non-existing face #{[v1, v2, v3]}"
+    end
+    @faces[vs[0]][vs[1]][vs[2]]
+  end
+
+  def recalculate_kp!(vertices, v1, v2, v3)
+    get(v1, v2, v3)[:kp] = vertices.calculate_kp(v1, v2, v3)
+  end
+
+  def kp(v1, v2, v3)
+    ret = get(v1, v2, v3)[:kp]
+    raise "kp for #{[v1, v2, v3]} has never calculated!" unless ret
+    ret
+  end
+end
+
+class ObjectManager
+  def initialize(file_path)
+    @vertices = Vertices.new
+    @lines = Lines.new
+    @faces = Faces.new
+    # 初始化所有点, 面
+    # 点: { vector: Vector[x, y, z], faces: [face_id, ..], lines: [line_id, ..] }
+    # 面: { vertices: [v_id, ...], kp: Matrix[] }
+    # 线: { vertices: [v_id, ...], delta: 1.0 }
+    v_id = 0
+    File.read(file_path).split("\n").each do |line|
+      type, *rest = line.split(' ')
+      case type
+        when 'v'
+          @vertices.add_vertex(v_id, Vector[*(rest.map { |x| x.to_f })])
+          v_id += 1
+        when 'f'
+          vs = rest.map { |x| x.to_i - 1 }
+          @lines.add_lines_by_face(*vs)
+          face_id = @faces.add_face(*vs)
+          @vertices.attach_to_face(face_id, *vs)
+      end
+    end
+
+    @faces.each_face do |v1, v2, v3, _|
+      @faces.recalculate_kp!(@vertices, v1, v2, v3)
+    end
+    @lines.each_line do |v1, v2, _line|
+      @lines.set_delta_and_push_to_heap!(v1, v2, delta(v1, v2))
+    end
+  end
+  def delta(src_id, dst_id)
+    dst_vertex = @vertices.get_vec(dst_id)
+
+    # 三维行向量变成四维行向量
+    matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
+
+    faces = @vertices.get_associated_face_vertices(src_id)
+    sum_of_kps = Matrix.zero(4, 4)
+    faces.each do |v1, v2|
+      sum_of_kps += @faces.kp(v1, v2, src_id)
+    end
+    (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
+  end
+
+  def merge_vertex(src, dst)
+    puts "merging #{src} -> #{dst}" if VERBOSE >= V_NORMAL
+    # modify and delete faces
+    f1 = @vertices.get_associated_face_vertices(src).map { |x| (x + [src]).sort }
+    f2 = @vertices.get_associated_face_vertices(dst).map { |x| (x + [dst]).sort }
+    faces_to_delete = f1 & f2
+    faces_to_modify = f1 - f2
+    faces_that_has_changed = []
+    # after here, f1, f2 are invalid
+    faces_to_delete.each do |vs|
+      @faces.delete_face!(*vs)
+      @vertices.delete_face(*vs)
+    end
+    # +faces_to_modify+ 是需要修改的faces, 注意, 有可能修改后和已有面重合, 这种情况删除该修改前的面
+    faces_to_modify.each do |vs|
+      raise 'parameter error' unless vs.include?(src)
+      @faces.modify_face!(*(vs-[src]), src, dst)
+
+      # new_face.nil? == true 代表修改后和已有面重合
+      new_face = @vertices.modify_face!(*(vs-[src]), src, dst)
+      faces_that_has_changed << new_face if new_face
+    end
+    faces_that_has_changed.each do |vs|
+      @faces.recalculate_kp!(@vertices, *vs)
+    end
+
+    # modify and delete lines
+    lines_that_has_changed = Set.new
+    vertices_on_the_other_side = @vertices.get_associated_vertex_ids(src)
+    raise "#{dst} is not associated with #{src}" unless vertices_on_the_other_side.include?(dst)
+    lines_to_modify = vertices_on_the_other_side - [dst]
+    lines_to_modify.each do |v2|
+      # +line+ is v2-dst
+      line = @lines.modify_line!(v2, src, dst)
+
+      if line
+        @vertices.modify_line!(v2, src, dst)
+        lines_that_has_changed << line.sort
+      else
+        # we already have v2-dst
+        @vertices.delete_associated_vertex!(v2, src)
+        # lines_that_has_been_deleted << heap_ref
+      end
+    end
+
+    faces_that_has_changed.each do |vs|
+      lines_that_has_changed << [vs[0], vs[1]].sort
+      lines_that_has_changed << [vs[0], vs[2]].sort
+      lines_that_has_changed << [vs[1], vs[2]].sort
+    end
+
+    lines_that_has_changed.each do |v1, v2|
+      @lines.update_delta!(v1, v2, delta(v1, v2))
+      puts "recalculated delta for #{[v1, v2]}" if VERBOSE > V_NORMAL
+    end
+    # 需要更新包含src的面上的所有线段的delta
+
+    @lines.delete_line(src, dst)
+    @vertices.delete_line(src, dst)
+
+    @vertices.delete(src)
+  end
+  def select_a_best_line
+    @lines.select_a_best_line
+  end
+
+  def heap
+    @lines.heap
+  end
+
+  def write_to_file(file_path)
+    vertices_str, v_mappings = @vertices.to_obj
+    puts "vertices: #{v_mappings.size}"
+    faces_str, face_count = @faces.to_obj(v_mappings)
+    puts "faces: #{face_count}"
+    File.write(file_path, vertices_str + faces_str)
+  end
+
+  def face_count
+    @faces.count
+  end
+
+  def dump_print
+    puts @vertices.dump_to_s
+    puts @lines.dump_to_s
+    puts @faces.dump_to_s
+  end
+end
+
+SIMPLIFICATION_RATE = 1
+
+infile, outfile = nil, nil
+if ARGV.size == 1
+  infile = ARGV.first
+  outfile = File.join('out/', infile.split('/').last + '.1.obj')
+elsif ARGV.size == 2
+  infile, outfile = ARGV
+else
+  puts 'usage: ./meshsim.rb infile outfile'
+  exit!
+end
+
+obj = ObjectManager.new(infile)
+puts 'initialized'
+original_face_count = obj.face_count
+target_face_count = original_face_count * SIMPLIFICATION_RATE
+# obj.dump_print
 i = 0
-@heap.sort! { |x, y| y[:delta] <=> x[:delta] }
-# dump_print if @verbose
-while face_count > target_face_count
-  # line = @heap.pop
-  line = nil
-  i = 0
-  until line
-    line = @lines[@lines.keys[i]]&.first&.last
-    i += 1
-  end
-
-  unless line
-    puts 'all faces have gone'
-    break
-  end
-  v1, v2 = line[:vertices]
-  if line[:deleted]
-    puts "skipping deleted line #{v1} -> #{v2}\n"
-    next
-  end
-
-  puts "merging #{v1} -> #{v2}"
-  merge_vertex(v1, v2)
-  puts
-  face_count = @faces.size
+while obj.face_count > target_face_count do
+  v1, v2 = obj.select_a_best_line
+  obj.merge_vertex(v1, v2)
+  # obj.dump_print
+  # puts
+  puts "simplifying #{(100.0 * obj.face_count / original_face_count).round(2)}" if i % 100 == 0
   i += 1
-  puts "current face count #{face_count}, target #{target_face_count}" if face_count % 500 == 0
-  # dump_print if @verbose
 end
 
-def output(vertices, faces)
-  str = ''
-  v_index = 0
-  v_mappings = {}
-  vertices.each do |id, v|
-    v_mappings[id] = v_index
-    v_index += 1
-    str += "v #{v[:vector].to_a.map { |x| x.to_s }.join(' ')}\n"
-  end
-  str += "\n"
-  faces.each do |_id, face|
-    v1, v2, v3 = face[:vertices].to_a
-    puts "f #{v1} #{v2} #{v3}" if @verbose
-
-    str += "f #{face[:vertices].to_a.map { |x| v_mappings[x] ? v_mappings[x] : (raise "no mapping #{x}") }.join(' ')}\n"
-  end
-  str
-end
-
-File.write('a.obj', output(@vertices, @faces))
+obj.write_to_file(outfile)
