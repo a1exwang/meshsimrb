@@ -35,13 +35,24 @@ void Init_fast_4d_matrix() {
 
 typedef struct TVec3Type {
     double values[3];
+    double moreValues[9];
 } Vec3Type;
 
 VALUE Vec3_method_initialize(VALUE self, VALUE rbx, VALUE rby, VALUE rbz) {
     Vec3Type *v = malloc(sizeof(Vec3Type));
-    v->values[0] = RFLOAT_VALUE(rbx);
-    v->values[1] = RFLOAT_VALUE(rby);
-    v->values[2] = RFLOAT_VALUE(rbz);
+    double x, y, z;
+    v->values[0] = x = RFLOAT_VALUE(rbx);
+    v->values[1] = y = RFLOAT_VALUE(rby);
+    v->values[2] = z = RFLOAT_VALUE(rbz);
+    v->moreValues[0] = x * x;
+    v->moreValues[1] = y * y;
+    v->moreValues[2] = z * z;
+    v->moreValues[3] = x * y;
+    v->moreValues[4] = x * z;
+    v->moreValues[5] = y * z;
+    v->moreValues[6] = x;
+    v->moreValues[7] = y;
+    v->moreValues[8] = z;
     VALUE vec3DataObj = Data_Wrap_Struct(rb_cObject, 0, free, v);
     VALUE idVec3DataObj = rb_intern("vec3_data_obj");
     rb_ivar_set(self, idVec3DataObj, vec3DataObj);
@@ -67,6 +78,7 @@ VALUE Vec3_method_to_a(VALUE self) {
 #define TMatrix4SymType_KPS_COUNT 16
 typedef struct TMatrix4SymType {
     double kps[TMatrix4SymType_KPS_COUNT];
+    double moreValues[10];
 } Matrix4SymType;
 
 VALUE Matrix4Sym_class_method_zero(VALUE clazz) {
@@ -76,6 +88,8 @@ VALUE Matrix4Sym_class_method_zero(VALUE clazz) {
     Matrix4SymType *v = malloc(sizeof(Matrix4SymType));
     for (int i = 0; i < TMatrix4SymType_KPS_COUNT; ++i)
         v->kps[i] = 0;
+    for (int i = 0; i < 10; ++i)
+        v->moreValues[i] = 0;
     VALUE matDataObject = Data_Wrap_Struct(rb_cObject, 0, free, v);
     VALUE idMatDataObj = rb_intern("mat_data_obj");
     rb_ivar_set(obj, idMatDataObj, matDataObject);
@@ -98,6 +112,16 @@ VALUE Matrix4Sym_class_method_from_vec4(VALUE clazz, VALUE aa, VALUE bb, VALUE c
     v->kps[8] =  a * c; v->kps[9] =  b * c; v->kps[10] = c * c; v->kps[11] = d * c;
     v->kps[12] = a * d; v->kps[13] = b * d; v->kps[14] = c * d; v->kps[15] = d * d;
 
+    v->moreValues[0] = a * a;
+    v->moreValues[1] = b * b;
+    v->moreValues[2] = c * c;
+    v->moreValues[3] = a * b;
+    v->moreValues[4] = a * c;
+    v->moreValues[5] = b * c;
+    v->moreValues[6] = a;
+    v->moreValues[7] = b;
+    v->moreValues[8] = c;
+    v->moreValues[9] = d * d;
 
     VALUE matDataObject = Data_Wrap_Struct(rb_cObject, 0, free, v);
     VALUE idMatDataObj = rb_intern("mat_data_obj");
@@ -150,6 +174,17 @@ VALUE Matrix4Sym_class_method_from_face(VALUE clazz, VALUE v1, VALUE v2, VALUE v
     v->kps[8] =  a * c; v->kps[9] =  b * c; v->kps[10] = c * c; v->kps[11] = d * c;
     v->kps[12] = a * d; v->kps[13] = b * d; v->kps[14] = c * d; v->kps[15] = d * d;
 
+    v->moreValues[0] = a * a;
+    v->moreValues[1] = b * b;
+    v->moreValues[2] = c * c;
+    v->moreValues[3] = a * b;
+    v->moreValues[4] = a * c;
+    v->moreValues[5] = b * c;
+    v->moreValues[6] = a;
+    v->moreValues[7] = b;
+    v->moreValues[8] = c;
+    v->moreValues[9] = d * d;
+
     VALUE matDataObject = Data_Wrap_Struct(rb_cObject, 0, free, v);
     VALUE idMatDataObj = rb_intern("mat_data_obj");
     rb_ivar_set(obj, idMatDataObj, matDataObject);
@@ -186,6 +221,9 @@ VALUE Matrix4Sym_method_add_bang(VALUE self, VALUE other) {
     for (int i = 0; i < TMatrix4SymType_KPS_COUNT; ++i) {
         matObj1->kps[i] += matObj2->kps[i];
     }
+    for (int i = 0; i < 10; ++i) {
+        matObj1->moreValues[i] += matObj2->moreValues[i];
+     }
 
     return Qnil;
 }
@@ -201,22 +239,24 @@ VALUE Matrix4Sym_method_delta(VALUE self, VALUE vec) {
     Matrix4SymType *matObj;
     Data_Get_Struct(rbMatObject, Matrix4SymType, matObj);
 
-    double *xi = vec3DataObj->values;
-    double *kij = matObj->kps;
+//    double *xi = vec3DataObj->values;
+    double *xiMore = vec3DataObj->moreValues;
+//    double *kij = matObj->kps;
+    double *kijMore = matObj->moreValues;
 
     double ret = 0;
-    ret += xi[0] * xi[0] * kij[0 * 4 + 3];
-    ret += xi[1] * xi[1] * kij[1 * 4 + 3];
-    ret += xi[2] * xi[2] * kij[2 * 4 + 3];
-    ret += kij[3 * 4 + 3];
+    ret += xiMore[0] * kijMore[0]; // 0,0
+    ret += xiMore[1] * kijMore[1]; // 1,1
+    ret += xiMore[2] * kijMore[2]; // 2,2
+    ret += kijMore[9];             // 3,3
 
     double rest = 0;
-    rest += xi[0] * xi[1] * kij[0 * 4 + 1];
-    rest += xi[0] * xi[2] * kij[0 * 4 + 2];
-    rest += xi[0]         * kij[0 * 4 + 3];
-    rest += xi[1] * xi[2] * kij[1 * 4 + 2];
-    rest += xi[1]         * kij[1 * 4 + 3];
-    rest += xi[2]         * kij[2 * 4 + 3];
+    rest += xiMore[3] * kijMore[3]; // xiMore 0,1
+    rest += xiMore[4] * kijMore[4]; // xiMore 0,2
+    rest += xiMore[5] * kijMore[5]; // xiMore 1,2
+    rest += xiMore[6] * kijMore[6]; // x
+    rest += xiMore[7] * kijMore[7]; // y
+    rest += xiMore[8] * kijMore[8]; // z
 
     ret += rest * 2;
     return rb_float_new(ret);
