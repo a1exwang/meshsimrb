@@ -7,7 +7,7 @@ V_VERBOSE = 5
 V_NORMAL = 1
 V_SILENT = 0
 
-VERBOSE = V_NORMAL
+VERBOSE = V_SILENT
 
 class Vertices
   def initialize
@@ -265,13 +265,14 @@ class Lines
 end
 
 class Faces
+  attr_reader :count
   def self.check(v1, v2, v3, u1, u2, u3)
     [v1, v2, v3].sort == [u1, u2, u3].sort
   end
 
   def initialize
     @faces = {}
-    @current_index = 0
+    @count = 0
   end
 
   def add_face(v1, v2, v3)
@@ -279,6 +280,7 @@ class Faces
     @faces[vs[0]] = {} unless @faces[vs[0]]
     @faces[vs[0]][vs[1]] = {} unless @faces[vs[0]][vs[1]]
     raise ArgumentError, "trying to add existing face #{vs}" if @faces[vs[0]][vs[1]][vs[2]]
+    @count += 1
     @faces[vs[0]][vs[1]][vs[2]] = { vertices: [v1, v2, v3] }
   end
 
@@ -288,6 +290,7 @@ class Faces
     ret = @faces[vs[0]][vs[1]].delete vs[2]
     @faces[vs[0]].delete vs[1] if @faces[vs[0]][vs[1]].size == 0
     @faces.delete vs[0] if @faces[vs[0]].size == 0
+    @count -= 1
     ret
   end
 
@@ -481,6 +484,10 @@ class ObjectManager
     File.write(file_path, vertices_str + faces_str)
   end
 
+  def face_count
+    @faces.count
+  end
+
   def dump_print
     puts @vertices.dump_to_s
     puts @lines.dump_to_s
@@ -488,19 +495,22 @@ class ObjectManager
   end
 end
 
-obj = ObjectManager.new('test_data/cube.obj')
+SIMPLIFICATION_RATE = 0.5
+
+obj = ObjectManager.new('test_data/dinosaur.2k.obj')
+original_face_count = obj.face_count
+target_face_count = original_face_count * SIMPLIFICATION_RATE
 
 # obj.dump_print
-
-5.times do
+while obj.face_count > target_face_count do
   v1, v2 = obj.select_a_best_line
   # begin
   obj.merge_vertex(v1, v2)
   # rescue
   #   puts $!
   # end
-  obj.dump_print
-  puts
+  # obj.dump_print
+  # puts
 end
 
 obj.write_to_file('a.obj')
