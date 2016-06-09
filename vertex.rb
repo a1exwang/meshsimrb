@@ -1,4 +1,5 @@
 require 'matrix'
+require_relative 'deletable_heap'
 
 V_DBG = 10
 V_VERBOSE = 5
@@ -105,6 +106,11 @@ class Vertices
     @vertices[src][:associated_vertices].delete v1
   end
 
+  def delete_associated_vertex(id, to_delete)
+    raise "vertex #{to_delete} is not associated with #{id}" unless @vertices[to_delete][:associated_vertices].include?(id)
+    @vertices[id][:associated_vertices].delete to_delete
+  end
+
   def to_obj
     str = ''
     v_index = 0
@@ -145,12 +151,16 @@ end
 class Lines
   def initialize
     @lines = {}
+    @heap = DeletableHeap.new { |x, y| x[:delta] <=> y[:delta] }
   end
-
+  def heap
+    @heap
+  end
   def get_delta(v1, v2)
     get(v1, v2)[:delta]
   end
 
+  # used only for initializing
   def add_lines_by_face(v1, v2, v3)
     begin
       add_line(v1, v2)
@@ -168,7 +178,7 @@ class Lines
       puts e if VERBOSE > V_NORMAL
     end
   end
-
+  # used only for initializing
   def add_line(v1, v2)
     raise "two same vertices cannot make a line #{v1}" if v1 == v2
     v1, v2 = v2, v1 if v1 > v2
@@ -190,6 +200,7 @@ class Lines
     if get(v1, v2)
       v1, v2 = v2, v1 if v1 > v2
       ret = @lines[v1].delete v2
+      @heap.delete(ret[:heap_ref])
       @lines.delete v1 if @lines[v1].size == 0
       ret
     else
@@ -198,16 +209,21 @@ class Lines
   end
 
   def modify_line(v1, src, dst)
-    delete_line(v1, src)
-    begin
-      add_line(v1, dst)
-    rescue ArgumentError => e
-      puts e if VERBOSE > V_NORMAL
-    end
+    line = delete_line(v1, src)
+    line[:vertices] = [v1, dst]
+
+    s, e = v1 < dst ? [v1, dst] : [dst, v1]
+    @lines[s] = {} unless @lines[s]
+    return nil if @lines[s][e]
+    line[:heap_ref] = @heap.push(line)
+    @lines[s][e] = line
+    [s, e]
   end
 
-  def first
-    @lines.first.last.first.last[:vertices]
+  def select_a_best_line
+    # @lines.first.last.first.last[:vertices]
+    line = @heap.pop
+    line[:vertices]
   end
 
   def dump_to_s
@@ -218,8 +234,17 @@ class Lines
     str
   end
 
-  def set_delta!(v1, v2, delta)
-    get(v1, v2)[:delta] = delta
+  def set_delta_and_push_to_heap!(v1, v2, delta)
+    line = get(v1, v2)
+    line[:delta] = delta
+    line[:heap_ref] = @heap.push line
+  end
+  def update_delta!(v1, v2, delta)
+    line = get(v1, v2)
+    @heap.delete(line[:heap_ref])
+    puts "delta unchanged for line #{[v1, v2]}, delta: #{delta}" if delta == line[:delta] && VERBOSE >= V_NORMAL
+    line[:delta] = delta
+    @heap.push(line)
   end
 
   private
@@ -326,19 +351,6 @@ class Faces
 end
 
 class ObjectManager
-  def delta(src_id, dst_id)
-    dst_vertex = @vertices.get_vec(dst_id)
-
-    # 三维行向量变成四维行向量
-    matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
-
-    faces = @vertices.get_associated_face_vertices(src_id)
-    sum_of_kps = Matrix.zero(4, 4)
-    faces.each do |v1, v2|
-      sum_of_kps += @faces.kp(v1, v2, src_id)
-    end
-    (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
-  end
   def initialize(file_path)
     @vertices = Vertices.new
     @lines = Lines.new
@@ -365,13 +377,26 @@ class ObjectManager
     @faces.each_face do |v1, v2, v3, _|
       @faces.recalculate_kp!(@vertices, v1, v2, v3)
     end
-    @lines.each_line do |v1, v2, _|
-      @lines.set_delta!(v1, v2, delta(v1, v2))
+    @lines.each_line do |v1, v2, _line|
+      @lines.set_delta_and_push_to_heap!(v1, v2, delta(v1, v2))
     end
+  end
+  def delta(src_id, dst_id)
+    dst_vertex = @vertices.get_vec(dst_id)
+
+    # 三维行向量变成四维行向量
+    matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
+
+    faces = @vertices.get_associated_face_vertices(src_id)
+    sum_of_kps = Matrix.zero(4, 4)
+    faces.each do |v1, v2|
+      sum_of_kps += @faces.kp(v1, v2, src_id)
+    end
+    (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
   end
 
   def merge_vertex(src, dst)
-    puts "merging #{src} -> #{dst}\n\n" if VERBOSE >= V_NORMAL
+    puts "merging #{src} -> #{dst}" if VERBOSE >= V_NORMAL
     # modify and delete faces
     f1 = @vertices.get_associated_face_vertices(src).map { |x| (x + [src]).sort }
     f2 = @vertices.get_associated_face_vertices(dst).map { |x| (x + [dst]).sort }
@@ -383,10 +408,13 @@ class ObjectManager
       @faces.delete_face!(*vs)
       @vertices.delete_face(*vs)
     end
+    # +faces_to_modify+ 是需要修改的faces, 注意, 有可能修改后和已有面重合, 这种情况删除该修改前的面
     faces_to_modify.each do |vs|
       raise 'parameter error' unless vs.include?(src)
-      new_face = @vertices.modify_face!(*(vs-[src]), src, dst)
       @faces.modify_face!(*(vs-[src]), src, dst)
+
+      # new_face.nil? == true 代表修改后和已有面重合
+      new_face = @vertices.modify_face!(*(vs-[src]), src, dst)
       faces_that_has_changed << new_face if new_face
     end
     faces_that_has_changed.each do |vs|
@@ -399,28 +427,42 @@ class ObjectManager
     raise "#{dst} is not associated with #{src}" unless lines_to_touch.include?(dst)
     lines_to_modify = lines_to_touch - [dst]
     lines_to_modify.each do |v2|
-      # the line is src-v2
-      @lines.modify_line(v2, src, dst)
-      begin
+      # +line+ is v2-dst
+      line = @lines.modify_line(v2, src, dst)
+
+      if line
         @vertices.modify_line(v2, src, dst)
-        lines_that_has_changed << [v2, dst]
-      rescue ArgumentError => e
-        puts e if VERBOSE > V_NORMAL
+        lines_that_has_changed << line.sort
+      else
+        # we already have v2-dst
+        @vertices.delete_associated_vertex(v2, src)
+        # lines_that_has_been_deleted << heap_ref
       end
     end
-    lines_that_has_changed.each do |v1, v2|
-      @lines.set_delta!(v1, v2, delta(v1, v2))
-      puts "recalculated delta for #{[v1, v2]}" if VERBOSE >= V_NORMAL
+
+    faces_that_has_changed.each do |vs|
+      lines_that_has_changed << [vs[0], vs[1]].sort unless lines_that_has_changed.include?([vs[0], vs[1]].sort)
+      lines_that_has_changed << [vs[0], vs[2]].sort unless lines_that_has_changed.include?([vs[0], vs[2]].sort)
+      lines_that_has_changed << [vs[1], vs[2]].sort unless lines_that_has_changed.include?([vs[1], vs[2]].sort)
     end
+
+    lines_that_has_changed.each do |v1, v2|
+      @lines.update_delta!(v1, v2, delta(v1, v2))
+      puts "recalculated delta for #{[v1, v2]}" if VERBOSE > V_NORMAL
+    end
+    # 需要更新包含src的面上的所有线段的delta
 
     @lines.delete_line(src, dst)
     @vertices.delete_line(src, dst)
 
     @vertices.delete(src)
   end
+  def select_a_best_line
+    @lines.select_a_best_line
+  end
 
-  def get_a_line
-    @lines.first
+  def heap
+    @lines.heap
   end
 
   def write_to_file(file_path)
@@ -438,12 +480,12 @@ class ObjectManager
   end
 end
 
-obj = ObjectManager.new('test_data/dinosaur.2k.obj')
+obj = ObjectManager.new('test_data/cube.obj')
 
 # obj.dump_print
 
-1000.times do
-  v1, v2 = obj.get_a_line
+3.times do
+  v1, v2 = obj.select_a_best_line
   obj.merge_vertex(v1, v2)
   # obj.dump_print
   puts
