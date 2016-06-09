@@ -6,6 +6,8 @@ extension_name = 'fast_4d_matrix'
 append_cflags('-std=c99')
 append_cflags('-Wno-declaration-after-statement')
 
+append_ldflags('-lm')
+
 # The destination
 dir_config(extension_name)
 

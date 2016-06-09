@@ -14,7 +14,103 @@ module MeshSim
 
   $verbose_level = V_SILENT
 
+  module MatrixMathMixinFast1
+    def calculate_kp(v1, v2, v3)
+      Matrix[*Fast4DMatrix::Matrix4Sym.from_face(
+          Fast4DMatrix::Vec3.new(*get_vec(v1)),
+          Fast4DMatrix::Vec3.new(*get_vec(v2)),
+          Fast4DMatrix::Vec3.new(*get_vec(v3))).to_a]
+    end
+    def delta(faces_obj, src_id, dst_id)
+      dst_vertex = get_vec(dst_id)
+
+      # 三维行向量变成四维行向量
+      matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
+
+      faces = get_associated_face_vertices(src_id)
+      sum_of_kps = Matrix.zero(4, 4)
+      faces.each do |v1, v2|
+        sum_of_kps += faces_obj.get_kp(v1, v2, src_id)
+      end
+      (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
+    end
+  end
+
+  module MatrixMathMixinFast2
+    def calculate_kp(v1, v2, v3)
+      vec1, vec2, vec3 = *[v1, v2, v3].map { |x| Vector[*get_vec(x)] }
+      n = (vec1 - vec2).cross(vec1 - vec3)
+      # (m.dot m.transpose).to_f
+      raise "#{[vec1, vec2, vec3]} cannot make a face" if n.r == 0
+      nn = n.normalize
+      # p = Matrix[[nn[0], nn[1], nn[2], -nn.dot(vec1)]]
+      # p.t * p
+      nn.to_a + [-nn.dot(vec1)]
+    end
+    def delta(faces_obj, src_id, dst_id)
+      dst_vertex = get_vec(dst_id)
+      vec3 = Fast4DMatrix::Vec3.new(*dst_vertex)
+      faces = get_associated_face_vertices(src_id)
+      sum_of_kps = Fast4DMatrix::Matrix4Sym.zero
+      faces.each do |v1, v2|
+        p = faces_obj.get_kp(v1, v2, src_id)
+        sum_of_kps.add! Fast4DMatrix::Matrix4Sym.from_vec4(*p)
+      end
+      sum_of_kps.delta(vec3)
+    end
+  end
+
+  module MatrixMathMixinFast
+    def calculate_kp(v1, v2, v3)
+      Fast4DMatrix::Matrix4Sym.from_face(
+          Fast4DMatrix::Vec3.new(*get_vec(v1)),
+          Fast4DMatrix::Vec3.new(*get_vec(v2)),
+          Fast4DMatrix::Vec3.new(*get_vec(v3)))
+    end
+    def delta(faces_obj, src_id, dst_id)
+      dst_vertex = get_vec(dst_id)
+      vec3 = Fast4DMatrix::Vec3.new(*dst_vertex)
+      faces = get_associated_face_vertices(src_id)
+      sum_of_kps = Fast4DMatrix::Matrix4Sym.zero
+      faces.each do |v1, v2|
+        sum_of_kps.add! faces_obj.get_kp(v1, v2, src_id)
+      end
+      sum_of_kps.delta(vec3)
+    end
+  end
+
+  module MatrixMathMixinSlow
+    def calculate_kp(v1, v2, v3)
+      vec1, vec2, vec3 = *[v1, v2, v3].map { |x| Vector[*get_vec(x)] }
+      n = (vec1 - vec2).cross(vec1 - vec3)
+      # (m.dot m.transpose).to_f
+      raise "#{[vec1, vec2, vec3]} cannot make a face" if n.r == 0
+      nn = n.normalize
+      # p = Matrix[[nn[0], nn[1], nn[2], -nn.dot(vec1)]]
+      # p.t * p
+      nn.to_a + [-nn.dot(vec1)]
+    end
+    def delta(faces_obj, src_id, dst_id)
+      dst_vertex = get_vec(dst_id)
+
+      # 三维行向量变成四维行向量
+      matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
+
+      faces = get_associated_face_vertices(src_id)
+      sum_of_kps = Matrix.zero(4, 4)
+      faces.each do |v1, v2|
+        p = faces_obj.get_kp(v1, v2, src_id)
+        p = Matrix[p]
+        kp = p.t * p
+        sum_of_kps += kp
+      end
+      (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
+    end
+  end
+
   class Vertices
+    include MatrixMathMixinFast
+
     def initialize
       @vertices = {}
     end
@@ -50,7 +146,7 @@ module MeshSim
     #   @vertices[id][:vector] = vec
     # end
 
-    def delete(id)
+    def delete_vertex(id)
       raise "no such vertex #{id}" unless @vertices[id]
       @vertices.delete id
     end
@@ -122,8 +218,7 @@ module MeshSim
       @vertices[id][:associated_vertices].delete to_delete
     end
 
-    def to_obj
-      str = ''
+    def to_obj(io)
       v_index = 0
       v_mappings = {}
       total_size = @vertices.size
@@ -132,13 +227,13 @@ module MeshSim
       @vertices.each do |id, v|
         v_mappings[id] = v_index
         v_index += 1
-        str += "v #{v[:vector].to_a.map { |x| x.to_s }.join(' ')}\n"
+        io.puts "v #{v[:vector].to_a.map { |x| x.to_s }.join(' ')}"
         puts "formatting vertices #{(100.0 * i / total_size).round(2)}%..." if i % stepping_index == 0 && $verbose_level >= V_NORMAL
         i += 1
       end
       puts "formatting vertices done\n\n" if $verbose_level >= V_NORMAL
-      str += "\n"
-      [str, v_mappings]
+      io.puts "\n"
+      v_mappings
     end
 
     def dump_to_s
@@ -148,49 +243,6 @@ module MeshSim
       end
       str
     end
-
-    def calculate_kp(v1, v2, v3)
-      vec1, vec2, vec3 = *[v1, v2, v3].map { |x| Vector[*get_vec(x)] }
-      n = (vec1 - vec2).cross(vec1 - vec3)
-      # (m.dot m.transpose).to_f
-      raise "#{[vec1, vec2, vec3]} cannot make a face" if n.r == 0
-      nn = n.normalize
-      # p = Matrix[[nn[0], nn[1], nn[2], -nn.dot(vec1)]]
-      # p.t * p
-      nn.to_a + [-nn.dot(vec1)]
-    end
-
-    def delta(faces_obj, src_id, dst_id)
-      dst_vertex = get_vec(dst_id)
-
-      # 三维行向量变成四维行向量
-      matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
-
-      faces = get_associated_face_vertices(src_id)
-      sum_of_kps = Matrix.zero(4, 4)
-      faces.each do |v1, v2|
-        p = faces_obj.get_kp(v1, v2, src_id)
-        p = Matrix[p]
-        kp = p.t * p
-        sum_of_kps += kp
-      end
-      (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
-    end
-
-    def calculate_kp_fast(v1, v2, v3)
-      Fast4DMatrix::Matrix4Sym.from_face(v1, v2, v3)
-    end
-    def delta_fast(faces_obj, src_id, dst_id)
-      dst_vertex = get_vec(dst_id)
-      vec3 = Fast4DMatrix::Vec3.new(*dst_vertex)
-      faces = get_associated_face_vertices(src_id)
-      sum_of_kps = Fast4DMatrix::Matrix4Sym.zero
-      faces.each do |v1, v2|
-        sum_of_kps.add! faces_obj.get_kp(v1, v2, src_id)
-      end
-      sum_of_kps.delta(vec3)
-    end
-
   end
 
   class Lines
@@ -367,20 +419,19 @@ module MeshSim
       @faces.reduce(0) { |sum, item1| sum + item1.last.reduce(0) { |s1,item2| s1 + item2.last.size } }
     end
 
-    def to_obj(v_mappings)
-      str = ''
+    def to_obj(v_mappings, io)
       total_size = 0
       each_face { total_size += 1 }
       i = 0
       stepping_index = [(total_size * 0.1).round, 1].max
       each_face do |v1, v2, v3, face|
         puts "f #{v1} #{v2} #{v3}" if $verbose_level > V_NORMAL
-        str += "f #{face[:vertices].map { |x| v_mappings[x] ? v_mappings[x] + 1 : (raise "no mapping #{x}") }.join(' ')}\n"
+        io.puts "f #{face[:vertices].map { |x| v_mappings[x] ? v_mappings[x] + 1 : (raise "no mapping #{x}") }.join(' ')}"
         puts "formatting faces #{(100.0 * i / total_size).round(2)}%" if i % stepping_index == 0  && $verbose_level >= V_NORMAL
         i += 1
       end
       puts "formatting faces done\n\n" if $verbose_level >= V_NORMAL
-      [str, i]
+      i
     end
     def dump_to_s
       str = "faces\n"
@@ -391,11 +442,11 @@ module MeshSim
     end
 
     def get(v1, v2, v3)
-      vs = [v1, v2, v3].sort
-      unless @faces[vs[0]] && @faces[vs[0]][vs[1]] && @faces[vs[0]][vs[1]][vs[2]]
+      v1, v2, v3 = [v1, v2, v3].sort
+      unless @faces[v1] && @faces[v1][v2] && @faces[v1][v2][v3]
         raise "trying to get non-existing face #{[v1, v2, v3]}"
       end
-      @faces[vs[0]][vs[1]][vs[2]]
+      @faces[v1][v2][v3]
     end
 
     def recalculate_kp!(vertices, v1, v2, v3)
@@ -508,7 +559,7 @@ module MeshSim
       @lines.delete_line(src, dst)
       @vertices.delete_line(src, dst)
 
-      @vertices.delete(src)
+      @vertices.delete_vertex(src)
     end
     def select_a_best_line
       @lines.select_a_best_line
@@ -527,11 +578,12 @@ module MeshSim
     end
 
     def write_to_file(file_path)
-      vertices_str, v_mappings = @vertices.to_obj
-      puts "vertices: #{v_mappings.size}" if $verbose_level > MeshSim::V_SILENT
-      faces_str, face_count = @faces.to_obj(v_mappings)
-      puts "faces: #{face_count}" if $verbose_level > MeshSim::V_SILENT
-      File.write(file_path, vertices_str + faces_str)
+      File.open(file_path, 'w') do |f|
+        v_mappings = @vertices.to_obj(f)
+        puts "vertices: #{v_mappings.size}" if $verbose_level > MeshSim::V_SILENT
+        face_count = @faces.to_obj(v_mappings, f)
+        puts "faces: #{face_count}" if $verbose_level > MeshSim::V_SILENT
+      end
     end
 
     def face_count
@@ -546,20 +598,13 @@ module MeshSim
     end
   end
 
-
   def self.meshsim(infile, outfile, rate, verbose)
     $verbose_level = verbose
     # require 'ruby-prof'
-
+    #
     # # profile the code
     # RubyProf.start
     obj = ObjectManager.new(infile)
-
-    # result = RubyProf.stop
-    # # print a flat profile to text
-    # printer = RubyProf::FlatPrinter.new(result)
-    # printer.print(STDOUT)
-    # exit!
 
     puts 'initialized' if $verbose_level > V_SILENT
     original_face_count = obj.face_count
@@ -579,6 +624,12 @@ module MeshSim
     end
 
     obj.write_to_file(outfile)
+
+    # result = RubyProf.stop
+    # # print a flat profile to text
+    # printer = RubyProf::FlatPrinter.new(result)
+    # printer.print(STDOUT)
+    # exit!
   end
 
 end

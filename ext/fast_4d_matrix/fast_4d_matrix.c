@@ -1,4 +1,5 @@
 #include "ruby.h"
+#include <math.h>
 
 VALUE Fast4DMatrix = Qnil;
 VALUE Vec3 = Qnil;
@@ -13,6 +14,8 @@ VALUE Matrix4Sym_class_method_zero(VALUE clazz);
 VALUE Matrix4Sym_class_method_from_vec4(VALUE clazz, VALUE a, VALUE b, VALUE c, VALUE d);
 VALUE Matrix4Sym_class_method_from_face(VALUE clazz, VALUE v1, VALUE v2, VALUE v3);
 VALUE Matrix4Sym_method_to_a(VALUE self);
+VALUE Matrix4Sym_method_delta(VALUE self, VALUE vec);
+VALUE Matrix4Sym_method_add_bang(VALUE self, VALUE other);
 
 void Init_fast_4d_matrix() {
 	Fast4DMatrix = rb_define_module("Fast4DMatrix");
@@ -26,6 +29,8 @@ void Init_fast_4d_matrix() {
 	rb_define_singleton_method(Matrix4Sym, "from_vec4", Matrix4Sym_class_method_from_vec4, 4);
 	rb_define_singleton_method(Matrix4Sym, "from_face", Matrix4Sym_class_method_from_face, 3);
 	rb_define_method(Matrix4Sym, "to_a", Matrix4Sym_method_to_a, 0);
+	rb_define_method(Matrix4Sym, "delta", Matrix4Sym_method_delta, 1);
+	rb_define_method(Matrix4Sym, "add!", Matrix4Sym_method_add_bang, 1);
 }
 
 typedef struct TVec3Type {
@@ -102,13 +107,40 @@ VALUE Matrix4Sym_class_method_from_vec4(VALUE clazz, VALUE aa, VALUE bb, VALUE c
 
 VALUE Matrix4Sym_class_method_from_face(VALUE clazz, VALUE v1, VALUE v2, VALUE v3) {
     VALUE idNew = rb_intern("new");
+    VALUE idVec3DataObj = rb_intern("vec3_data_obj");
+    VALUE rbVec3DataObj;
+
     VALUE obj = rb_funcall(clazz, idNew, 0);
 
+    Vec3Type *vec1, *vec2, *vec3;
+    rbVec3DataObj = rb_ivar_get(v1, idVec3DataObj);
+    Data_Get_Struct(rbVec3DataObj, Vec3Type, vec1);
+    rbVec3DataObj = rb_ivar_get(v2, idVec3DataObj);
+    Data_Get_Struct(rbVec3DataObj, Vec3Type, vec2);
+    rbVec3DataObj = rb_ivar_get(v3, idVec3DataObj);
+    Data_Get_Struct(rbVec3DataObj, Vec3Type, vec3);
 
+    // calculate normal vector
+    double x1 = vec1->values[0] - vec2->values[0];
+    double y1 = vec1->values[1] - vec2->values[1];
+    double z1 = vec1->values[2] - vec2->values[2];
+    double x2 = vec1->values[0] - vec3->values[0];
+    double y2 = vec1->values[1] - vec3->values[1];
+    double z2 = vec1->values[2] - vec3->values[2];
 
-    double a = 0;
-    double b = 0;
-    double c = 0;
+    // y1*z2 - y2*z1
+    double a = y1 * z2 - y2 * z1;
+    double b = z1 * x2 - z2 * x1;
+    double c = x1 * y2 - x2 * y1;
+    double r = sqrt(a*a+b*b+c*c);
+    if (r == 0) {
+        rb_raise(rb_eRuntimeError, "these three vectors cannot make a face");
+        return Qnil;
+    }
+
+    a /= r;
+    b /= r;
+    c /= r;
     double d = 1;
 
     Matrix4SymType *v = malloc(sizeof(Matrix4SymType));
@@ -138,7 +170,54 @@ VALUE Matrix4Sym_method_to_a(VALUE self) {
         }
         rb_ary_push(ret, lineAry);
     }
-
     return ret;
 }
 
+VALUE Matrix4Sym_method_add_bang(VALUE self, VALUE other) {
+    VALUE idMatDataObj = rb_intern("mat_data_obj");
+    VALUE rbMatObject;
+    Matrix4SymType *matObj1, *matObj2;
+
+    rbMatObject = rb_ivar_get(self, idMatDataObj);
+    Data_Get_Struct(rbMatObject, Matrix4SymType, matObj1);
+    rbMatObject = rb_ivar_get(other, idMatDataObj);
+    Data_Get_Struct(rbMatObject, Matrix4SymType, matObj2);
+
+    for (int i = 0; i < TMatrix4SymType_KPS_COUNT; ++i) {
+        matObj1->kps[i] += matObj2->kps[i];
+    }
+
+    return Qnil;
+}
+
+VALUE Matrix4Sym_method_delta(VALUE self, VALUE vec) {
+    VALUE idVec3DataObj = rb_intern("vec3_data_obj");
+    Vec3Type *vec3DataObj;
+    VALUE rbVec3DataObj = rb_ivar_get(vec, idVec3DataObj);
+    Data_Get_Struct(rbVec3DataObj, Vec3Type, vec3DataObj);
+
+    VALUE idMatDataObj = rb_intern("mat_data_obj");
+    VALUE rbMatObject = rb_ivar_get(self, idMatDataObj);
+    Matrix4SymType *matObj;
+    Data_Get_Struct(rbMatObject, Matrix4SymType, matObj);
+
+    double *xi = vec3DataObj->values;
+    double *kij = matObj->kps;
+
+    double ret = 0;
+    ret += xi[0] * xi[0] * kij[0 * 4 + 3];
+    ret += xi[1] * xi[1] * kij[1 * 4 + 3];
+    ret += xi[2] * xi[2] * kij[2 * 4 + 3];
+    ret += kij[3 * 4 + 3];
+
+    double rest = 0;
+    rest += xi[0] * xi[1] * kij[0 * 4 + 1];
+    rest += xi[0] * xi[2] * kij[0 * 4 + 2];
+    rest += xi[0]         * kij[0 * 4 + 3];
+    rest += xi[1] * xi[2] * kij[1 * 4 + 2];
+    rest += xi[1]         * kij[1 * 4 + 3];
+    rest += xi[2]         * kij[2 * 4 + 3];
+
+    ret += rest * 2;
+    return rb_float_new(ret);
+}
