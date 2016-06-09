@@ -1,5 +1,7 @@
+#!/usr/bin/env ruby
 require 'matrix'
 require 'set'
+require 'optparse'
 require_relative 'deletable_heap'
 
 V_DBG = 10
@@ -496,22 +498,44 @@ class ObjectManager
 end
 
 SIMPLIFICATION_RATE = 1
-
-infile, outfile = nil, nil
-if ARGV.size == 1
-  infile = ARGV.first
-  outfile = File.join('out/', infile.split('/').last + '.1.obj')
-elsif ARGV.size == 2
-  infile, outfile = ARGV
-else
-  puts 'usage: ./meshsim.rb infile outfile'
-  exit!
+options = { rate: 0.05 }
+parser = OptionParser.new do |opt|
+  opt.on('-i', '--input INFILE', 'input file') do |infile|
+    options[:infile] = infile
+  end
+  opt.on('-o', '--output OUTFILE', 'output file') do |outfile|
+    options[:outfile] = outfile
+  end
+  opt.on('--rate RATE', OptionParser::DecimalNumeric, 'rate') do |rate|
+    options[:rate] = rate
+    if rate <= 0 || rate > 1
+      puts 'invalid parameter'
+      exit!
+    end
+  end
+  opt.on('-h', '--help', 'show this message') do
+    puts opt.help
+    exit!
+  end
+end
+parser.parse!
+unless options[:infile]
+  puts parser.help
+  exit
 end
 
-obj = ObjectManager.new(infile)
+unless options[:outfile]
+  options[:outfile] = File.join('out/', options[:infile].split('/').last.split('.')[0..-2].join('.') + ".#{options[:rate].round(2)}.obj")
+end
+
+puts 'infile:  %s' % options[:infile]
+puts 'outfile: %s' % options[:outfile]
+puts 'rate:    %s%%' % (100*options[:rate]).round(2).to_s
+
+obj = ObjectManager.new(options[:infile])
 puts 'initialized'
 original_face_count = obj.face_count
-target_face_count = original_face_count * SIMPLIFICATION_RATE
+target_face_count = original_face_count * options[:rate]
 # obj.dump_print
 i = 0
 while obj.face_count > target_face_count do
@@ -523,4 +547,4 @@ while obj.face_count > target_face_count do
   i += 1
 end
 
-obj.write_to_file(outfile)
+obj.write_to_file(options[:outfile])
