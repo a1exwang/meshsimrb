@@ -2,7 +2,9 @@
 require 'matrix'
 require 'set'
 require 'optparse'
+require 'narray'
 require_relative 'deletable_heap'
+require_relative 'lib/fast_4d_matrix'
 
 V_DBG = 10
 V_VERBOSE = 5
@@ -16,8 +18,8 @@ class Vertices
     @vertices = {}
   end
 
-  def add_vertex(id, vector)
-    @vertices[id] = { vector: vector, faces: [], associated_vertices: [] }
+  def add_vertex(id, point)
+    @vertices[id] = { vector: point, faces: [], associated_vertices: [] }
   end
 
   def attach_to_face(face_id, v1, v2, v3)
@@ -41,6 +43,11 @@ class Vertices
     raise "no such vertex #{id}" unless @vertices[id]
     @vertices[id][:vector]
   end
+
+  # def moving_vec(id, vec)
+  #   raise "no such vertex #{id}" unless @vertices[id]
+  #   @vertices[id][:vector] = vec
+  # end
 
   def delete(id)
     raise "no such vertex #{id}" unless @vertices[id]
@@ -142,13 +149,33 @@ class Vertices
   end
 
   def calculate_kp(v1, v2, v3)
-    vec1, vec2, vec3 = *[v1, v2, v3].map { |x| get_vec(x) }
+    vec1, vec2, vec3 = *[v1, v2, v3].map { |x| Vector[*get_vec(x)] }
     n = (vec1 - vec2).cross(vec1 - vec3)
+    # (m.dot m.transpose).to_f
     raise "#{[vec1, vec2, vec3]} cannot make a face" if n.r == 0
     nn = n.normalize
-    p = Matrix[[nn[0]], [nn[1]], [nn[2]], [-nn.dot(vec1)]]
-    p * p.t
+    # p = Matrix[[nn[0], nn[1], nn[2], -nn.dot(vec1)]]
+    # p.t * p
+    nn.to_a + [-nn.dot(vec1)]
   end
+
+  def delta(faces_obj, src_id, dst_id)
+    dst_vertex = get_vec(dst_id)
+
+    # 三维行向量变成四维行向量
+    matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
+
+    faces = get_associated_face_vertices(src_id)
+    sum_of_kps = Matrix.zero(4, 4)
+    faces.each do |v1, v2|
+      p = faces_obj.get_kp(v1, v2, src_id)
+      p = Matrix[p]
+      kp = p.t * p
+      sum_of_kps += kp
+    end
+    (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
+  end
+
 end
 
 class Lines
@@ -321,6 +348,10 @@ class Faces
     end
   end
 
+  def count_face_on
+    @faces.reduce(0) { |sum, item1| sum + item1.last.reduce(0) { |s1,item2| s1 + item2.last.size } }
+  end
+
   def to_obj(v_mappings)
     str = ''
     total_size = 0
@@ -356,7 +387,7 @@ class Faces
     get(v1, v2, v3)[:kp] = vertices.calculate_kp(v1, v2, v3)
   end
 
-  def kp(v1, v2, v3)
+  def get_kp(v1, v2, v3)
     ret = get(v1, v2, v3)[:kp]
     raise "kp for #{[v1, v2, v3]} has never calculated!" unless ret
     ret
@@ -377,13 +408,15 @@ class ObjectManager
       type, *rest = line.split(' ')
       case type
         when 'v'
-          @vertices.add_vertex(v_id, Vector[*(rest.map { |x| x.to_f })])
+          @vertices.add_vertex(v_id, rest.map { |x| x.to_f })
           v_id += 1
         when 'f'
           vs = rest.map { |x| x.to_i - 1 }
           @lines.add_lines_by_face(*vs)
           face_id = @faces.add_face(*vs)
           @vertices.attach_to_face(face_id, *vs)
+        else
+          'ignore it'
       end
     end
 
@@ -391,30 +424,22 @@ class ObjectManager
       @faces.recalculate_kp!(@vertices, v1, v2, v3)
     end
     @lines.each_line do |v1, v2, _line|
-      @lines.set_delta_and_push_to_heap!(v1, v2, delta(v1, v2))
+      @lines.set_delta_and_push_to_heap!(v1, v2, @vertices.delta(@faces, v1, v2))
     end
-  end
-  def delta(src_id, dst_id)
-    dst_vertex = @vertices.get_vec(dst_id)
-
-    # 三维行向量变成四维行向量
-    matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
-
-    faces = @vertices.get_associated_face_vertices(src_id)
-    sum_of_kps = Matrix.zero(4, 4)
-    faces.each do |v1, v2|
-      sum_of_kps += @faces.kp(v1, v2, src_id)
-    end
-    (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
   end
 
   def merge_vertex(src, dst)
     puts "merging #{src} -> #{dst}" if VERBOSE >= V_NORMAL
+
+    # merging_point = (@vertices.get_vec(src) + @vertices.get_vec(dst)) / 2
+    # @vertices.moving_vec(dst, merging_point)
+
     # modify and delete faces
     f1 = @vertices.get_associated_face_vertices(src).map { |x| (x + [src]).sort }
     f2 = @vertices.get_associated_face_vertices(dst).map { |x| (x + [dst]).sort }
     faces_to_delete = f1 & f2
     faces_to_modify = f1 - f2
+    faces_to_recalculate = []#f2 - f1
     faces_that_has_changed = []
     # after here, f1, f2 are invalid
     faces_to_delete.each do |vs|
@@ -430,7 +455,7 @@ class ObjectManager
       new_face = @vertices.modify_face!(*(vs-[src]), src, dst)
       faces_that_has_changed << new_face if new_face
     end
-    faces_that_has_changed.each do |vs|
+    (faces_that_has_changed + faces_to_recalculate).each do |vs|
       @faces.recalculate_kp!(@vertices, *vs)
     end
 
@@ -453,14 +478,14 @@ class ObjectManager
       end
     end
 
-    faces_that_has_changed.each do |vs|
+    (faces_that_has_changed + faces_to_recalculate).each do |vs|
       lines_that_has_changed << [vs[0], vs[1]].sort
       lines_that_has_changed << [vs[0], vs[2]].sort
       lines_that_has_changed << [vs[1], vs[2]].sort
     end
 
     lines_that_has_changed.each do |v1, v2|
-      @lines.update_delta!(v1, v2, delta(v1, v2))
+      @lines.update_delta!(v1, v2, @vertices.delta(@faces, v1, v2))
       puts "recalculated delta for #{[v1, v2]}" if VERBOSE > V_NORMAL
     end
     # 需要更新包含src的面上的所有线段的delta
@@ -476,6 +501,14 @@ class ObjectManager
 
   def heap
     @lines.heap
+  end
+
+  def line_count
+    @lines.heap.size
+  end
+
+  def count_face
+    @faces.count_face_on
   end
 
   def write_to_file(file_path)
@@ -494,10 +527,10 @@ class ObjectManager
     puts @vertices.dump_to_s
     puts @lines.dump_to_s
     puts @faces.dump_to_s
+    puts
   end
 end
 
-SIMPLIFICATION_RATE = 1
 options = { rate: 0.05 }
 parser = OptionParser.new do |opt|
   opt.on('-i', '--input INFILE', 'input file') do |infile|
@@ -532,18 +565,33 @@ puts 'infile:  %s' % options[:infile]
 puts 'outfile: %s' % options[:outfile]
 puts 'rate:    %s%%' % (100*options[:rate]).round(2).to_s
 
+# require 'ruby-prof'
+
+# # profile the code
+# RubyProf.start
+
 obj = ObjectManager.new(options[:infile])
+
+# result = RubyProf.stop
+# # print a flat profile to text
+# printer = RubyProf::FlatPrinter.new(result)
+# printer.print(STDOUT)
+# exit!
+
 puts 'initialized'
 original_face_count = obj.face_count
+original_line_count = obj.line_count
+puts "original face count #{original_face_count}"
 target_face_count = original_face_count * options[:rate]
+target_line_count = target_face_count * 1.5
 # obj.dump_print
 i = 0
-while obj.face_count > target_face_count do
+while obj.line_count > target_line_count do
+  # raise 'data corruption detected' unless obj.count_face == obj.face_count
   v1, v2 = obj.select_a_best_line
   obj.merge_vertex(v1, v2)
   # obj.dump_print
-  # puts
-  puts "simplifying #{(100.0 * obj.face_count / original_face_count).round(2)}" if i % 100 == 0
+  puts "simplifying #{(100.0 * obj.line_count / original_line_count).round(2)}" if i % 100 == 0
   i += 1
 end
 

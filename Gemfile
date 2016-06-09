@@ -1,1 +1,5 @@
 gem 'rspec'
+gem 'ruby-prof'
+gem 'narray'
+gem 'rake'
+gem 'rake-compiler'
