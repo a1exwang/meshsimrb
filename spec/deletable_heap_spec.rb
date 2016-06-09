@@ -52,4 +52,22 @@ RSpec.describe DeletableHeap do
     heap.push(start - 1)
     expect(item[:index]).to eq(1)
   end
+
+  it 'should hash swap valid' do
+
+    item1 = { index: 1, data: {} }
+    item1[:data][:ref] = item1
+    item2 = { index: 2, data: {} }
+    item2[:data][:ref] = item2
+
+    hash = {
+        1 => item1,
+        2 => item2
+    }
+
+    hash[1], hash[2] = hash[2], hash[1]
+    expect(hash[1][:index]).to eq(2)
+    expect(hash[1][:data][:ref].__id__).to eq(item2.__id__)
+  end
+
 end

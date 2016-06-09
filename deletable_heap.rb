@@ -31,6 +31,11 @@ class DeletableHeap
     ret[:data]
   end
 
+  def peek
+    raise 'heap is empty' if @size <= 0
+    @array.first[:data]
+  end
+
   def delete(item)
     raise 'data corruption detected' unless item[:index].is_a?(Integer)
     index = item[:index]
@@ -108,6 +113,5 @@ class DeletableHeap
     @array[a][:index] = a
     @array[b][:index] = b
   end
-
 end
 

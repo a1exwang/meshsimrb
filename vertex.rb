@@ -1,4 +1,5 @@
 require 'matrix'
+require 'set'
 require_relative 'deletable_heap'
 
 V_DBG = 10
@@ -94,7 +95,7 @@ class Vertices
   end
 
   # raise ArgumentError if v1-dst exists
-  def modify_line(v1, src, dst)
+  def modify_line!(v1, src, dst)
     raise "vertex #{src} is not associated with #{v1}" unless @vertices[src][:associated_vertices].include?(v1)
     @vertices[v1][:associated_vertices].delete src
     raise ArgumentError, "vertex #{dst} is associated with #{v1}" if @vertices[dst][:associated_vertices].include?(v1)
@@ -106,7 +107,7 @@ class Vertices
     @vertices[src][:associated_vertices].delete v1
   end
 
-  def delete_associated_vertex(id, to_delete)
+  def delete_associated_vertex!(id, to_delete)
     raise "vertex #{to_delete} is not associated with #{id}" unless @vertices[to_delete][:associated_vertices].include?(id)
     @vertices[id][:associated_vertices].delete to_delete
   end
@@ -117,7 +118,7 @@ class Vertices
     v_mappings = {}
     total_size = @vertices.size
     i = 0
-    stepping_index = (0.1 * total_size).round
+    stepping_index = [(0.1 * total_size).round, 1].max
     @vertices.each do |id, v|
       v_mappings[id] = v_index
       v_index += 1
@@ -208,21 +209,26 @@ class Lines
     end
   end
 
-  def modify_line(v1, src, dst)
+  def modify_line!(v1, src, dst)
+    # raise "trying to delete non-existing line #{v1}-#{v2}" unless get(v1, src)
+    # s, e = v1 < src ? [v1, src] : [src, v1]
+    # line = @lines[s].delete e
+    # @lines.delete s if @lines[s].size == 0
     line = delete_line(v1, src)
     line[:vertices] = [v1, dst]
+    # @heap.delete(line[:heap_ref])
 
     s, e = v1 < dst ? [v1, dst] : [dst, v1]
-    @lines[s] = {} unless @lines[s]
-    return nil if @lines[s][e]
+    return nil if @lines[s] && @lines[s][e]
     line[:heap_ref] = @heap.push(line)
+    @lines[s] = {} unless @lines[s]
     @lines[s][e] = line
     [s, e]
   end
 
   def select_a_best_line
     # @lines.first.last.first.last[:vertices]
-    line = @heap.pop
+    line = @heap.peek
     line[:vertices]
   end
 
@@ -239,12 +245,14 @@ class Lines
     line[:delta] = delta
     line[:heap_ref] = @heap.push line
   end
+
   def update_delta!(v1, v2, delta)
     line = get(v1, v2)
-    @heap.delete(line[:heap_ref])
     puts "delta unchanged for line #{[v1, v2]}, delta: #{delta}" if delta == line[:delta] && VERBOSE >= V_NORMAL
+
+    @heap.delete(line[:heap_ref])
     line[:delta] = delta
-    @heap.push(line)
+    line[:heap_ref] = @heap.push(line)
   end
 
   private
@@ -313,7 +321,7 @@ class Faces
     total_size = 0
     each_face { total_size += 1 }
     i = 0
-    stepping_index = (total_size * 0.1).round
+    stepping_index = [(total_size * 0.1).round, 1].max
     each_face do |v1, v2, v3, face|
       puts "f #{v1} #{v2} #{v3}" if VERBOSE > V_NORMAL
       str += "f #{face[:vertices].map { |x| v_mappings[x] ? v_mappings[x] + 1 : (raise "no mapping #{x}") }.join(' ')}\n"
@@ -422,28 +430,28 @@ class ObjectManager
     end
 
     # modify and delete lines
-    lines_that_has_changed = []
-    lines_to_touch = @vertices.get_associated_vertex_ids(src)
-    raise "#{dst} is not associated with #{src}" unless lines_to_touch.include?(dst)
-    lines_to_modify = lines_to_touch - [dst]
+    lines_that_has_changed = Set.new
+    vertices_on_the_other_side = @vertices.get_associated_vertex_ids(src)
+    raise "#{dst} is not associated with #{src}" unless vertices_on_the_other_side.include?(dst)
+    lines_to_modify = vertices_on_the_other_side - [dst]
     lines_to_modify.each do |v2|
       # +line+ is v2-dst
-      line = @lines.modify_line(v2, src, dst)
+      line = @lines.modify_line!(v2, src, dst)
 
       if line
-        @vertices.modify_line(v2, src, dst)
+        @vertices.modify_line!(v2, src, dst)
         lines_that_has_changed << line.sort
       else
         # we already have v2-dst
-        @vertices.delete_associated_vertex(v2, src)
+        @vertices.delete_associated_vertex!(v2, src)
         # lines_that_has_been_deleted << heap_ref
       end
     end
 
     faces_that_has_changed.each do |vs|
-      lines_that_has_changed << [vs[0], vs[1]].sort unless lines_that_has_changed.include?([vs[0], vs[1]].sort)
-      lines_that_has_changed << [vs[0], vs[2]].sort unless lines_that_has_changed.include?([vs[0], vs[2]].sort)
-      lines_that_has_changed << [vs[1], vs[2]].sort unless lines_that_has_changed.include?([vs[1], vs[2]].sort)
+      lines_that_has_changed << [vs[0], vs[1]].sort
+      lines_that_has_changed << [vs[0], vs[2]].sort
+      lines_that_has_changed << [vs[1], vs[2]].sort
     end
 
     lines_that_has_changed.each do |v1, v2|
@@ -484,10 +492,14 @@ obj = ObjectManager.new('test_data/cube.obj')
 
 # obj.dump_print
 
-3.times do
+5.times do
   v1, v2 = obj.select_a_best_line
+  # begin
   obj.merge_vertex(v1, v2)
-  # obj.dump_print
+  # rescue
+  #   puts $!
+  # end
+  obj.dump_print
   puts
 end
 
