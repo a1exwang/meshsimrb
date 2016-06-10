@@ -13,63 +13,18 @@ module MeshSim
   V_SILENT = 0
 
   $verbose_level = V_SILENT
-
-  module MatrixMathMixinFast1
-    def calculate_kp(v1, v2, v3)
-      Matrix[*Fast4DMatrix::Matrix4Sym.from_face(
-          Fast4DMatrix::Vec3.new(*get_vec(v1)),
-          Fast4DMatrix::Vec3.new(*get_vec(v2)),
-          Fast4DMatrix::Vec3.new(*get_vec(v3))).to_a]
-    end
-    def delta(faces_obj, src_id, dst_id)
-      dst_vertex = get_vec(dst_id)
-
-      # 三维行向量变成四维行向量
-      matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
-
-      faces = get_associated_face_vertices(src_id)
-      sum_of_kps = Matrix.zero(4, 4)
-      faces.each do |v1, v2|
-        sum_of_kps += faces_obj.get_kp(v1, v2, src_id)
-      end
-      (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
-    end
-  end
-
-  module MatrixMathMixinFast2
-    def calculate_kp(v1, v2, v3)
-      vec1, vec2, vec3 = *[v1, v2, v3].map { |x| Vector[*get_vec(x)] }
-      n = (vec1 - vec2).cross(vec1 - vec3)
-      # (m.dot m.transpose).to_f
-      raise "#{[vec1, vec2, vec3]} cannot make a face" if n.r == 0
-      nn = n.normalize
-      # p = Matrix[[nn[0], nn[1], nn[2], -nn.dot(vec1)]]
-      # p.t * p
-      nn.to_a + [-nn.dot(vec1)]
-    end
-    def delta(faces_obj, src_id, dst_id)
-      dst_vertex = get_vec(dst_id)
-      vec3 = Fast4DMatrix::Vec3.new(*dst_vertex)
-      faces = get_associated_face_vertices(src_id)
-      sum_of_kps = Fast4DMatrix::Matrix4Sym.zero
-      faces.each do |v1, v2|
-        p = faces_obj.get_kp(v1, v2, src_id)
-        sum_of_kps.add! Fast4DMatrix::Matrix4Sym.from_vec4(*p)
-      end
-      sum_of_kps.delta(vec3)
-    end
-  end
+  $safe_on = true
 
   module MatrixMathMixinFast
     def calculate_kp(v1, v2, v3)
       Fast4DMatrix::Matrix4Sym.from_face(
-          Fast4DMatrix::Vec3.new(*get_vec(v1)),
-          Fast4DMatrix::Vec3.new(*get_vec(v2)),
-          Fast4DMatrix::Vec3.new(*get_vec(v3)))
+          Fast4DMatrix::Vec3.from_a(*get_vec(v1)),
+          Fast4DMatrix::Vec3.from_a(*get_vec(v2)),
+          Fast4DMatrix::Vec3.from_a(*get_vec(v3)))
     end
     def delta(faces_obj, src_id, dst_id)
       dst_vertex = get_vec(dst_id)
-      vec3 = Fast4DMatrix::Vec3.new(*dst_vertex)
+      vec3 = Fast4DMatrix::Vec3.from_a(*dst_vertex)
       faces = get_associated_face_vertices(src_id)
       sum_of_kps = Fast4DMatrix::Matrix4Sym.zero
       faces.each do |v1, v2|
@@ -88,7 +43,8 @@ module MeshSim
       nn = n.normalize
       # p = Matrix[[nn[0], nn[1], nn[2], -nn.dot(vec1)]]
       # p.t * p
-      nn.to_a + [-nn.dot(vec1)]
+      p = Matrix[nn.to_a + [-nn.dot(vec1)]]
+      p.t * p
     end
     def delta(faces_obj, src_id, dst_id)
       dst_vertex = get_vec(dst_id)
@@ -99,10 +55,7 @@ module MeshSim
       faces = get_associated_face_vertices(src_id)
       sum_of_kps = Matrix.zero(4, 4)
       faces.each do |v1, v2|
-        p = faces_obj.get_kp(v1, v2, src_id)
-        p = Matrix[p]
-        kp = p.t * p
-        sum_of_kps += kp
+        sum_of_kps += faces_obj.get_kp(v1, v2, src_id)
       end
       (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
     end
@@ -120,24 +73,24 @@ module MeshSim
     end
 
     def attach_to_face(face_id, v1, v2, v3)
-      raise "vertex #{v1} already on face #{face_id}" if @vertices[v1][:faces].include?(face_id)
+      raise "vertex #{v1} already on face #{face_id}" if $safe_on && @vertices[v1][:faces].include?(face_id)
       @vertices[v1][:faces] << [v2, v3].sort
       @vertices[v1][:associated_vertices] << v2 unless @vertices[v1][:associated_vertices].include?(v2)
       @vertices[v1][:associated_vertices] << v3 unless @vertices[v1][:associated_vertices].include?(v3)
 
-      raise "vertex #{v1} already on face #{face_id}" if @vertices[v2][:faces].include?(face_id)
+      raise "vertex #{v1} already on face #{face_id}" if $safe_on && @vertices[v2][:faces].include?(face_id)
       @vertices[v2][:faces] << [v1, v3].sort
       @vertices[v2][:associated_vertices] << v1 unless @vertices[v2][:associated_vertices].include?(v1)
       @vertices[v2][:associated_vertices] << v3 unless @vertices[v2][:associated_vertices].include?(v3)
 
-      raise "vertex #{v1} already on face #{face_id}" if @vertices[v3][:faces].include?(face_id)
+      raise "vertex #{v1} already on face #{face_id}" if $safe_on && @vertices[v3][:faces].include?(face_id)
       @vertices[v3][:faces] << [v1, v2].sort
       @vertices[v3][:associated_vertices] << v2 unless @vertices[v3][:associated_vertices].include?(v2)
       @vertices[v3][:associated_vertices] << v1 unless @vertices[v3][:associated_vertices].include?(v1)
     end
 
     def get_vec(id)
-      raise "no such vertex #{id}" unless @vertices[id]
+      raise "no such vertex #{id}" if $safe_on && !@vertices[id]
       @vertices[id][:vector]
     end
 
@@ -147,74 +100,83 @@ module MeshSim
     # end
 
     def delete_vertex(id)
-      raise "no such vertex #{id}" unless @vertices[id]
+      raise "no such vertex #{id}" if $safe_on && !@vertices[id]
       @vertices.delete id
     end
 
     def delete_face(v1, v2, v3)
-      raise "vertex #{v1} is not on face #{[v2, v3]}" unless @vertices[v1][:faces].include? [v2, v3].sort
-      @vertices[v1][:faces].delete [v2, v3].sort
-      raise "vertex #{v2} is not on face #{[v1, v3]}" unless @vertices[v2][:faces].include? [v1, v3].sort
-      @vertices[v2][:faces].delete [v1, v3].sort
-      raise "vertex #{v3} is not on face #{[v2, v1]}" unless @vertices[v3][:faces].include? [v2, v1].sort
-      @vertices[v3][:faces].delete [v2, v1].sort
+      v1, v2, v3 = [v1, v2, v3].sort
+      raise "vertex #{v1} is not on face #{[v2, v3]}" unless !$safe_on || @vertices[v1][:faces].include?([v2, v3])
+      @vertices[v1][:faces].delete [v2, v3]
+      raise "vertex #{v2} is not on face #{[v1, v3]}" unless !$safe_on || @vertices[v2][:faces].include?([v1, v3])
+      @vertices[v2][:faces].delete [v1, v3]
+      raise "vertex #{v3} is not on face #{[v1, v2]}" unless !$safe_on || @vertices[v3][:faces].include?([v1, v2])
+      @vertices[v3][:faces].delete [v1, v2]
     end
 
     def delete_line(v1, v2)
-      raise "data corruption detected, #{v2} is not in #{v1}'s associated list" unless @vertices[v1][:associated_vertices].include?(v2)
-      raise "data corruption detected, #{v1} is not in #{v2}'s associated list" unless @vertices[v2][:associated_vertices].include?(v1)
+      raise "data corruption detected, #{v2} is not in #{v1}'s associated list" unless !$safe_on || @vertices[v1][:associated_vertices].include?(v2)
+      raise "data corruption detected, #{v1} is not in #{v2}'s associated list" unless !$safe_on || @vertices[v2][:associated_vertices].include?(v1)
 
       @vertices[v1][:associated_vertices].delete v2
       @vertices[v2][:associated_vertices].delete v1
     end
 
     def get_associated_face_vertices(id)
-      raise "no such vertex #{id}" unless @vertices[id]
+      raise "no such vertex #{id}" unless !$safe_on || @vertices[id]
       @vertices[id][:faces]
     end
 
     def get_associated_vertex_ids(id)
-      raise "no such vertex #{id}" unless @vertices[id]
+      raise "no such vertex #{id}" unless !$safe_on || @vertices[id]
       @vertices[id][:associated_vertices]
     end
 
     # change face [v1, v2, src] -> [v1, v2, dst]
     # if [v1, v2, dst] exists, delete face [v1, v2, src] and returns false
+    #
     def modify_face!(v1, v2, src, dst)
-      raise "vertex #{src} is not on face #{[v1, v2]}" unless @vertices[src][:faces].include?([v1, v2].sort)
-      @vertices[src][:faces].delete [v1, v2].sort
-      raise "vertex #{v1} is not on face #{[src, v2]}" unless @vertices[v1][:faces].include?([src, v2].sort)
-      @vertices[v1][:faces].delete [v2, src].sort
-      raise "vertex #{v2} is not on face #{[v1, src]}" unless @vertices[v2][:faces].include?([v1, src].sort)
-      @vertices[v2][:faces].delete [v1, src].sort
+      v1, v2 = v2, v1 if v1 > v2
+      src1, v21 = src < v2 ? [src, v2] : [v2, src]
+      src2, v12 = src < v1 ? [src, v1] : [v1, src]
 
-      if @vertices[dst][:faces].include?([v1, v2].sort)
+      dst3, v23 = dst < v2 ? [dst, v2] : [v2, dst]
+      dst4, v14 = dst < v1 ? [dst, v1] : [v1, dst]
+
+      raise "vertex #{src} is not on face #{[v1, v2]}" unless !$safe_on || @vertices[src][:faces].include?([v1, v2])
+      @vertices[src][:faces].delete [v1, v2]
+      raise "vertex #{v1} is not on face #{[src, v2]}" unless !$safe_on || @vertices[v1][:faces].include?([src1, v21])
+      @vertices[v1][:faces].delete [src1, v21]
+      raise "vertex #{v2} is not on face #{[v1, src]}" unless !$safe_on || @vertices[v2][:faces].include?([src2, v12])
+      @vertices[v2][:faces].delete [src2, v12]
+
+      if @vertices[dst][:faces].include?([v1, v2])
         nil
       else
-        @vertices[dst][:faces] << [v1, v2].sort
-        raise "vertex #{v1} is on face #{[dst, v2]}" if @vertices[v1][:faces].include?([dst, v2].sort)
-        @vertices[v1][:faces] << [v2, dst].sort
-        raise "vertex #{v2} is on face #{[v1, dst]}" if @vertices[v2][:faces].include?([v1, dst].sort)
-        @vertices[v2][:faces] << [v1, dst].sort
+        @vertices[dst][:faces] << [v1, v2]
+        raise "vertex #{v1} is on face #{[dst, v2]}" if $safe_on && @vertices[v1][:faces].include?([dst3, v23])
+        @vertices[v1][:faces] << [dst3, v23]
+        raise "vertex #{v2} is on face #{[v1, dst]}" if $safe_on && @vertices[v2][:faces].include?([dst4, v14])
+        @vertices[v2][:faces] << [dst4, v14]
         [v1, v2, dst]
       end
     end
 
     # raise ArgumentError if v1-dst exists
     def modify_line!(v1, src, dst)
-      raise "vertex #{src} is not associated with #{v1}" unless @vertices[src][:associated_vertices].include?(v1)
+      raise "vertex #{src} is not associated with #{v1}" unless !$safe_on || @vertices[src][:associated_vertices].include?(v1)
       @vertices[v1][:associated_vertices].delete src
       raise ArgumentError, "vertex #{dst} is associated with #{v1}" if @vertices[dst][:associated_vertices].include?(v1)
       @vertices[v1][:associated_vertices] << dst
 
       @vertices[dst][:associated_vertices] << v1
 
-      raise "vertex #{v1} is not associated with #{src}" unless @vertices[src][:associated_vertices].include?(v1)
+      raise "vertex #{v1} is not associated with #{src}" unless !$safe_on || @vertices[src][:associated_vertices].include?(v1)
       @vertices[src][:associated_vertices].delete v1
     end
 
     def delete_associated_vertex!(id, to_delete)
-      raise "vertex #{to_delete} is not associated with #{id}" unless @vertices[to_delete][:associated_vertices].include?(id)
+      raise "vertex #{to_delete} is not associated with #{id}" unless !$safe_on || @vertices[to_delete][:associated_vertices].include?(id)
       @vertices[id][:associated_vertices].delete to_delete
     end
 
@@ -277,7 +239,7 @@ module MeshSim
     end
     # used only for initializing
     def add_line(v1, v2)
-      raise "two same vertices cannot make a line #{v1}" if v1 == v2
+      raise "two same vertices cannot make a line #{v1}" if $safe_on && v1 == v2
       v1, v2 = v2, v1 if v1 > v2
       @lines[v1] = {} unless @lines[v1]
       raise ArgumentError, "line #{v1}-#{v2} already exist" if @lines[v1][v2]
@@ -294,7 +256,7 @@ module MeshSim
     end
 
     def delete_line(v1, v2)
-      if get(v1, v2)
+      if !$safe_on || get(v1, v2)
         v1, v2 = v2, v1 if v1 > v2
         ret = @lines[v1].delete v2
         @heap.delete(ret[:heap_ref])
@@ -362,10 +324,6 @@ module MeshSim
 
   class Faces
     attr_reader :count
-    def self.check(v1, v2, v3, u1, u2, u3)
-      [v1, v2, v3].sort == [u1, u2, u3].sort
-    end
-
     def initialize
       @faces = {}
       @count = 0
@@ -382,7 +340,7 @@ module MeshSim
 
     def delete_face!(v1, v2, v3)
       vs = [v1, v2, v3].sort
-      raise "trying to delete non-existing face #{[v1, v2, v3]}" unless @faces[vs[0]] && @faces[vs[0]][vs[1]] && @faces[vs[0]][vs[1]][vs[2]]
+      raise "trying to delete non-existing face #{[v1, v2, v3]}" unless !$safe_on || (@faces[vs[0]] && @faces[vs[0]][vs[1]] && @faces[vs[0]][vs[1]][vs[2]])
       ret = @faces[vs[0]][vs[1]].delete vs[2]
       @faces[vs[0]].delete vs[1] if @faces[vs[0]][vs[1]].size == 0
       @faces.delete vs[0] if @faces[vs[0]].size == 0
@@ -443,9 +401,7 @@ module MeshSim
 
     def get(v1, v2, v3)
       v1, v2, v3 = [v1, v2, v3].sort
-      unless @faces[v1] && @faces[v1][v2] && @faces[v1][v2][v3]
-        raise "trying to get non-existing face #{[v1, v2, v3]}"
-      end
+      raise "trying to get non-existing face #{[v1, v2, v3]}" unless !$safe_on || @faces[v1] && @faces[v1][v2] && @faces[v1][v2][v3]
       @faces[v1][v2][v3]
     end
 
@@ -470,19 +426,21 @@ module MeshSim
       # 面: { vertices: [v_id, ...], kp: Matrix[] }
       # 线: { vertices: [v_id, ...], delta: 1.0 }
       v_id = 0
-      File.read(file_path).split("\n").each do |line|
-        type, *rest = line.split(' ')
-        case type
-          when 'v'
-            @vertices.add_vertex(v_id, rest.map { |x| x.to_f })
-            v_id += 1
-          when 'f'
-            vs = rest.map { |x| x.to_i - 1 }
-            @lines.add_lines_by_face(*vs)
-            face_id = @faces.add_face(*vs)
-            @vertices.attach_to_face(face_id, *vs)
-          else
-            'ignore it'
+      File.open(file_path, 'r') do |f|
+        f.readlines.each do |line|
+          type, *rest = line.split(' ')
+          case type
+            when 'v'
+              @vertices.add_vertex(v_id, rest.map { |x| x.to_f })
+              v_id += 1
+            when 'f'
+              vs = rest.map { |x| x.to_i - 1 }
+              @lines.add_lines_by_face(*vs)
+              face_id = @faces.add_face(*vs)
+              @vertices.attach_to_face(face_id, *vs)
+            else
+              'ignore it'
+          end
         end
       end
 
@@ -514,7 +472,7 @@ module MeshSim
       end
       # +faces_to_modify+ 是需要修改的faces, 注意, 有可能修改后和已有面重合, 这种情况删除该修改前的面
       faces_to_modify.each do |vs|
-        raise 'parameter error' unless vs.include?(src)
+        raise 'parameter error' unless !$safe_on || vs.include?(src)
         @faces.modify_face!(*(vs-[src]), src, dst)
 
         # new_face.nil? == true 代表修改后和已有面重合
@@ -528,7 +486,7 @@ module MeshSim
       # modify and delete lines
       lines_that_has_changed = Set.new
       vertices_on_the_other_side = @vertices.get_associated_vertex_ids(src)
-      raise "#{dst} is not associated with #{src}" unless vertices_on_the_other_side.include?(dst)
+      raise "#{dst} is not associated with #{src}" unless !$safe_on || vertices_on_the_other_side.include?(dst)
       lines_to_modify = vertices_on_the_other_side - [dst]
       lines_to_modify.each do |v2|
         # +line+ is v2-dst
@@ -598,12 +556,16 @@ module MeshSim
     end
   end
 
-  def self.meshsim(infile, outfile, rate, verbose)
+  def self.meshsim(infile, outfile, rate, verbose, prof = false, safe_on = true)
     $verbose_level = verbose
-    # require 'ruby-prof'
-    #
-    # # profile the code
-    # RubyProf.start
+    $safe_on = safe_on
+
+    if prof
+      require 'ruby-prof'
+      # profile the code
+      RubyProf.start
+    end
+
     obj = ObjectManager.new(infile)
 
     puts 'initialized' if $verbose_level > V_SILENT
@@ -625,11 +587,15 @@ module MeshSim
 
     obj.write_to_file(outfile)
 
-    # result = RubyProf.stop
-    # # print a flat profile to text
-    # printer = RubyProf::FlatPrinter.new(result)
-    # printer.print(STDOUT)
-    # exit!
+    if prof
+      result = RubyProf.stop
+      # print a flat profile to text
+      printer = RubyProf::FlatPrinter.new(result)
+      printer.print(STDOUT)
+      require 'byebug'
+      byebug
+      exit!
+    end
   end
 
 end

@@ -1,7 +1,7 @@
 module Fast4DMatrix
   class Vec3
     # method stub
-    def initialize(a, b, c); raise NotImplementedError; end
+    def self.from_a(a, b, c); raise NotImplementedError; end
     def to_a; raise NotImplementedError; end
   end
   class Matrix4Sym
