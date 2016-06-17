@@ -1,3 +1,4 @@
+source 'https://ruby.taobao.org'
 gem 'rspec'
 gem 'ruby-prof'
 gem 'narray'
