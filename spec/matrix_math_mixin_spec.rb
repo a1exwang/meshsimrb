@@ -32,23 +32,48 @@ RSpec.describe  do
     expect(fast.flatten.map { |x| x.round(2) }).to eq(slow.flatten.map { |x| x.round(2) })
   end
 
-  it 'can get delta' do
-    fast_faces = Object.new
-    def fast_faces.get_kp (v1, v2, v3)
-      Fast.new.calculate_kp(v1, v2, v3)
-    end
+  # it 'can get delta' do
+  #   fast_faces = Object.new
+  #   def fast_faces.get_kp (v1, v2, v3)
+  #     Fast.new.calculate_kp(v1, v2, v3)
+  #   end
+  #
+  #   slow_faces = Object.new
+  #   def slow_faces.get_kp(v1, v2, v3)
+  #     Slow.new.calculate_kp(v1, v2, v3)
+  #   end
+  #
+  #   fast = Fast.new
+  #   slow = Slow.new
+  #
+  #   delta1 = fast.delta(fast_faces, 0, 9)
+  #   delta2 = slow.delta(slow_faces, 0, 9)
+  #   expect(delta1.round(5)).to eq(delta2.round(5))
+  # end
 
-    slow_faces = Object.new
-    def slow_faces.get_kp(v1, v2, v3)
-      Slow.new.calculate_kp(v1, v2, v3)
-    end
-
-    fast = Fast.new
+  it 'slow can get best vertex' do
     slow = Slow.new
+    a, b, c = rand, rand, rand
+    kp = Matrix[
+      [1, 0, 0, a],
+      [0, 1, 0, b],
+      [0, 0, 1, c],
+      [0, 0, 0, 1]
+    ]
+    v1 = Vector[2, 0, 0]
+    v2 = Vector[0, 2, 0]
 
-    delta1 = fast.delta(fast_faces, 0, 9)
-    delta2 = slow.delta(slow_faces, 0, 9)
-    expect(delta1.round(5)).to eq(delta2.round(5))
+    v = slow.get_best_vertex(kp, v1, v2)
+    expect(v.to_a).to eq([-a, -b, -c])
+
+    kp = Matrix[
+        [0, 0, 0, a],
+        [0, 1, 0, b],
+        [0, 0, 1, c],
+        [0, 0, 0, 1]
+    ]
+    v = slow.get_best_vertex(kp, v1, v2)
+    expect(v.to_a).to eq([1, 1, 0])
   end
 
 end

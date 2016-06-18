@@ -147,16 +147,23 @@ VALUE Matrix4Sym_class_method_from_face(VALUE clazz, VALUE v1, VALUE v2, VALUE v
     double a = y1 * z2 - y2 * z1;
     double b = z1 * x2 - z2 * x1;
     double c = x1 * y2 - x2 * y1;
+    double d = 0;
     double r = sqrt(a*a+b*b+c*c);
-    if (r == 0) {
-        rb_raise(rb_eRuntimeError, "these three vectors cannot make a face");
-        return Qnil;
-    }
+//    if (r == 0) {
+//        rb_raise(rb_eRuntimeError, "these three vectors cannot make a face");
+//        return Qnil;
+//    }
 
-    a /= r;
-    b /= r;
-    c /= r;
-    double d = -(a * vec1->values[0] + b * vec1->values[1] + c * vec1->values[2]);
+    if (r == 0) {
+        a = b = c = 1;
+        d = 0;
+    }
+    else {
+        a /= r;
+        b /= r;
+        c /= r;
+        d = -(a * vec1->values[0] + b * vec1->values[1] + c * vec1->values[2]);
+    }
 
     Matrix4SymType *v = malloc(sizeof(Matrix4SymType));
 

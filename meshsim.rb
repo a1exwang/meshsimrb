@@ -35,34 +35,77 @@ module MeshSim
   end
 
   module MatrixMathMixinSlow
+    def get_best_vertex(kp, v1, v2)
+      begin
+        a = -kp[0, 3]
+        b = -kp[1, 3]
+        c = -kp[2, 3]
+        core = kp.first_minor(3, 3)
+        core.inverse * Vector[a, b, c]
+      rescue ExceptionForMatrix::ErrNotRegular
+        if v1.is_a?(Array) || v2.is_a?(Array)
+          (Vector[*v1.to_a] + Vector[*v2.to_a]) / 2
+        else
+          (v1 + v2) / 2
+        end
+      end
+    end
+
     def calculate_kp(v1, v2, v3)
       vec1, vec2, vec3 = *[v1, v2, v3].map { |x| Vector[*get_vec(x)] }
       n = (vec1 - vec2).cross(vec1 - vec3)
       # (m.dot m.transpose).to_f
-      raise "#{[vec1, vec2, vec3]} cannot make a face" if n.r == 0
-      nn = n.normalize
-      # p = Matrix[[nn[0], nn[1], nn[2], -nn.dot(vec1)]]
-      # p.t * p
-      p = Matrix[nn.to_a + [-nn.dot(vec1)]]
+      # raise "#{[vec1, vec2, vec3]} cannot make a face" if n.r == 0
+      if n.r == 0
+        p = Matrix[[1,1,1,0]]
+      else
+        nn = n.normalize
+        p = Matrix[nn.to_a + [-nn.dot(vec1)]]
+      end
+
       p.t * p
     end
     def delta(faces_obj, src_id, dst_id)
-      dst_vertex = get_vec(dst_id)
+      # dst_vertex = get_vec(dst_id).to_a
+      # src_vertex = get_vec(src_id).to_a
 
       # 三维行向量变成四维行向量
-      matrix_dst_vertex = Matrix[*dst_vertex.to_a.map { |x| [x] }, [1]]
+      # x = (dst_vertex[0] + src_vertex[0]) / 2
+      # y = (dst_vertex[1] + src_vertex[1]) / 2
+      # z = (dst_vertex[2] + src_vertex[2]) / 2
+      # matrix_dst_vertex = Matrix[[x], [y], [z], [1]]
 
-      faces = get_associated_face_vertices(src_id)
+      faces1 = get_associated_face_vertices(src_id)
+      faces2 = get_associated_face_vertices(dst_id)
       sum_of_kps = Matrix.zero(4, 4)
-      faces.each do |v1, v2|
+      faces1.each do |v1, v2|
         sum_of_kps += faces_obj.get_kp(v1, v2, src_id)
       end
-      (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first
+      faces2.each do |v1, v2|
+        sum_of_kps += faces_obj.get_kp(v1, v2, dst_id)
+      end
+
+      best_vertex = get_best_vertex(sum_of_kps, get_vec(src_id), get_vec(dst_id))
+      x, y, z = best_vertex.to_a
+      matrix_dst_vertex = Matrix[[x], [y], [z], [1]]
+
+      [best_vertex, (matrix_dst_vertex.t * sum_of_kps * matrix_dst_vertex).to_a.first.first]
+    end
+
+    def line?(v1, v2, v3)
+      x1, y1, z1 = v1.to_a
+      x2, y2, z2 = v2.to_a
+      x3, y3, z3 = v3.to_a
+      xx1, yy1, zz1 = x1 - x2, y1 - y2, z1 - z2
+      xx2, yy2, zz2 = x1 - x3, y1 - y3, z1 - z3
+      yy1 * zz2 - zz1 * yy2 == 0 &&
+          zz1 * xx2 - zz2 * xx1 == 0 &&
+          xx1 * yy2 - xx2 * yy1 == 0
     end
   end
 
   class Vertices
-    include MatrixMathMixinFast
+    include MatrixMathMixinSlow
 
     def initialize
       @vertices = {}
@@ -92,6 +135,11 @@ module MeshSim
     def get_vec(id)
       raise "no such vertex #{id}" if $safe_on && !@vertices[id]
       @vertices[id][:vector]
+    end
+
+    def move_vec(id, vec)
+      raise "no such vertex #{id}" if $safe_on && !@vertices[id]
+      @vertices[id][:vector] = vec
     end
 
     # def moving_vec(id, vec)
@@ -218,6 +266,9 @@ module MeshSim
     def get_delta(v1, v2)
       get(v1, v2)[:delta]
     end
+    def get_best_vertex(v1, v2)
+      get(v1, v2)[:best_vertex]
+    end
 
     # used only for initializing
     def add_lines_by_face(v1, v2, v3)
@@ -300,16 +351,19 @@ module MeshSim
 
     def set_delta_and_push_to_heap!(v1, v2, delta)
       line = get(v1, v2)
-      line[:delta] = delta
+      line[:best_vertex] = delta.first
+      line[:delta] = delta.last
       line[:heap_ref] = @heap.push line
     end
 
     def update_delta!(v1, v2, delta)
+      best_vertex, d = delta
       line = get(v1, v2)
-      puts "delta unchanged for line #{[v1, v2]}, delta: #{delta}" if delta == line[:delta] && $verbose_level >= V_NORMAL
+      puts "delta unchanged for line #{[v1, v2]}, best_vertex: #{best_vertex}, delta: #{d}" if d == line[:delta] && $verbose_level >= V_NORMAL
 
       @heap.delete(line[:heap_ref])
-      line[:delta] = delta
+      line[:delta] = d
+      line[:best_vertex] = best_vertex
       line[:heap_ref] = @heap.push(line)
     end
 
@@ -452,11 +506,35 @@ module MeshSim
       end
     end
 
-    def merge_vertex(src, dst)
-      puts "merging #{src} -> #{dst}" if $verbose_level >= V_NORMAL
+    def move_vertex(id, vec)
+      faces_that_has_changed = @vertices.get_associated_face_vertices(id)
 
-      # merging_point = (@vertices.get_vec(src) + @vertices.get_vec(dst)) / 2
-      # @vertices.moving_vec(dst, merging_point)
+      @vertices.move_vec(id, vec)
+      faces_that_has_changed.each do |v1, v2|
+        # 三点共线, 需要删掉这个面和面上最长的线
+        if @vertices.line?(@vertices.get_vec(v1), @vertices.get_vec(v2), @vertices.get_vec(id))
+          # id在v1, v2中间
+          # id在v1, v2外边
+          # raise 'invalid face detected'
+          @faces.recalculate_kp!(@vertices, v1, v2, id)
+        else
+          @faces.recalculate_kp!(@vertices, v1, v2, id)
+        end
+      end
+
+      faces_that_has_changed.each do |v1, v2|
+        @lines.update_delta!(v1, v2, @vertices.delta(@faces, v1, v2))
+        @lines.update_delta!(id, v2, @vertices.delta(@faces, id, v2))
+        @lines.update_delta!(v1, id, @vertices.delta(@faces, v1, id))
+      end
+
+    end
+
+    def merge_vertex(src, dst)
+      puts "merging #{src} and #{dst}" if $verbose_level >= V_NORMAL
+
+      target = @lines.get_best_vertex(src, dst)
+      move_vertex(dst, target)
 
       # modify and delete faces
       f1 = @vertices.get_associated_face_vertices(src).map { |x| (x + [src]).sort }
