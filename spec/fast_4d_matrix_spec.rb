@@ -17,15 +17,6 @@ RSpec.describe Fast4DMatrix do
     expect(m.to_a).to eq(Array.new(4) { Array.new(4, 1) })
   end
 
-  it 'can raise error with an invalid face' do
-    vec1 = Fast4DMatrix::Vec3.from_a(0.0, 1.0, 0.0)
-    vec2 = Fast4DMatrix::Vec3.from_a(0.0, 2.0, 0.0)
-    vec3 = Fast4DMatrix::Vec3.from_a(0.0, 3.0, 0.0)
-    expect do
-      Fast4DMatrix::Matrix4Sym.from_face(vec1, vec2, vec3)
-    end.to raise_error(StandardError)
-  end
-
   it 'can create matrix from face' do
     vec1 = Fast4DMatrix::Vec3.from_a(0.0, 1.0, 0.0)
     vec2 = Fast4DMatrix::Vec3.from_a(0.0, 2.0, 0.0)
@@ -75,4 +66,22 @@ RSpec.describe Fast4DMatrix do
     expect(m1.to_a).to eq(Array.new(4) { Array.new(4, 5) })
   end
 
+  #it 'can check verteces on the same line' do
+  #  v1 = Fast4DMatrix::Vec3.from_a(0.0, 0.0, 0.0)
+  #  v2 = Fast4DMatrix::Vec3.from_a(1.0, 0.0, 0.0)
+  #  v3 = Fast4DMatrix::Vec3.from_a(2.0, 0.0, 0.0)
+
+  #  expect(v1.line?(v2, v3)).to be_truthy
+  #  expect(v2.line?(v3, v1)).to be_truthy
+  #  expect(v3.line?(v2, v1)).to be_truthy
+  #end
+  it 'can check verteces not on the same line' do
+    v1 = Fast4DMatrix::Vec3.from_a(0.0, 2.0, 0.0)
+    v2 = Fast4DMatrix::Vec3.from_a(1.0, 0.0, 0.0)
+    v3 = Fast4DMatrix::Vec3.from_a(2.0, 0.0, 0.0)
+
+    expect(v1.line?(v2, v3)).to be_falsey
+    #expect(v2.line?(v3, v1)).to be_falsey
+    #expect(v3.line?(v2, v1)).to be_falsey
+  end
 end

@@ -23,14 +23,24 @@ module MeshSim
           Fast4DMatrix::Vec3.from_a(*get_vec(v3)))
     end
     def delta(faces_obj, src_id, dst_id)
-      dst_vertex = get_vec(dst_id)
-      vec3 = Fast4DMatrix::Vec3.from_a(*dst_vertex)
-      faces = get_associated_face_vertices(src_id)
+
+      faces1 = get_associated_face_vertices(src_id)
+      faces2 = get_associated_face_vertices(dst_id)
+
       sum_of_kps = Fast4DMatrix::Matrix4Sym.zero
-      faces.each do |v1, v2|
+      faces1.each do |v1, v2|
         sum_of_kps.add! faces_obj.get_kp(v1, v2, src_id)
       end
-      sum_of_kps.delta(vec3)
+      faces2.each do |v1, v2|
+        sum_of_kps.add! faces_obj.get_kp(v1, v2, dst_id)
+      end
+
+      best_vertex = sum_of_kps.get_best_vertex(get_vec(src_id), get_vec(dst_id))
+      [best_vertex, sum_of_kps.delta(best_vertex)]
+    end
+
+    def line?(v1, v2, v3)
+      v1.line?(v2, v3)
     end
   end
 
