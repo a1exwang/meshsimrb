@@ -35,7 +35,7 @@ module MeshSim
         sum_of_kps.add! faces_obj.get_kp(v1, v2, dst_id)
       end
 
-      best_vertex = sum_of_kps.get_best_vertex(get_vec(src_id), get_vec(dst_id))
+      best_vertex = sum_of_kps.get_best_vertex || (get_vec(src_id).mid(get_vec(dst_id)))
       [best_vertex, sum_of_kps.delta(best_vertex)]
     end
 
@@ -115,14 +115,15 @@ module MeshSim
   end
 
   class Vertices
-    include MatrixMathMixinSlow
+    include MatrixMathMixinFast
 
     def initialize
       @vertices = {}
     end
 
     def add_vertex(id, point)
-      @vertices[id] = { vector: point, faces: [], associated_vertices: [] }
+      raise 'type error' unless point.is_a?(Array)
+      @vertices[id] = { vector: Fast4DMatrix::Vec3.from_a(*point), faces: [], associated_vertices: [] }
     end
 
     def attach_to_face(face_id, v1, v2, v3)
@@ -148,14 +149,10 @@ module MeshSim
     end
 
     def move_vec(id, vec)
+      raise 'type error' unless vec.is_a?(Fast4DMatrix::Vec3)
       raise "no such vertex #{id}" if $safe_on && !@vertices[id]
       @vertices[id][:vector] = vec
     end
-
-    # def moving_vec(id, vec)
-    #   raise "no such vertex #{id}" unless @vertices[id]
-    #   @vertices[id][:vector] = vec
-    # end
 
     def delete_vertex(id)
       raise "no such vertex #{id}" if $safe_on && !@vertices[id]
@@ -369,7 +366,7 @@ module MeshSim
     def update_delta!(v1, v2, delta)
       best_vertex, d = delta
       line = get(v1, v2)
-      puts "delta unchanged for line #{[v1, v2]}, best_vertex: #{best_vertex}, delta: #{d}" if d == line[:delta] && $verbose_level >= V_NORMAL
+      # puts "delta unchanged for line #{[v1, v2]}, best_vertex: #{best_vertex}, delta: #{d}" if d == line[:delta] && $verbose_level >= V_NORMAL
 
       @heap.delete(line[:heap_ref])
       line[:delta] = d
@@ -464,9 +461,40 @@ module MeshSim
     end
 
     def get(v1, v2, v3)
-      v1, v2, v3 = [v1, v2, v3].sort
-      raise "trying to get non-existing face #{[v1, v2, v3]}" unless !$safe_on || @faces[v1] && @faces[v1][v2] && @faces[v1][v2][v3]
-      @faces[v1][v2][v3]
+      # v1, v2, v3 = [v1, v2, v3].sort
+      if v1 > v2
+        if v3 > v1
+          v_max = v3
+          v_mid = v1
+          v_min = v2
+        else
+          v_max = v1
+          if v3 > v2
+            v_mid = v3
+            v_min = v2
+          else
+            v_mid = v2
+            v_min = v3
+          end
+        end
+      else
+        if v3 > v2
+          v_max = v3
+          v_mid = v2
+          v_min = v1
+        else
+          v_max = v2
+          if v3 < v1
+            v_mid = v1
+            v_min = v3
+          else
+            v_mid = v3
+            v_min = v1
+          end
+        end
+      end
+      raise "trying to get non-existing face #{[v_min, v_mid, v_max]}" unless !$safe_on || @faces[v_min] && @faces[v_min][v_mid] && @faces[v_min][v_mid][v_max]
+      @faces[v_min][v_mid][v_max]
     end
 
     def recalculate_kp!(vertices, v1, v2, v3)
@@ -522,7 +550,8 @@ module MeshSim
       @vertices.move_vec(id, vec)
       faces_that_has_changed.each do |v1, v2|
         # 三点共线, 需要删掉这个面和面上最长的线
-        if @vertices.line?(@vertices.get_vec(v1), @vertices.get_vec(v2), @vertices.get_vec(id))
+        # if @vertices.line?(@vertices.get_vec(v1), @vertices.get_vec(v2), @vertices.get_vec(id))
+        if @vertices.get_vec(v1).line?(@vertices.get_vec(v2), @vertices.get_vec(id))
           # id在v1, v2中间
           # id在v1, v2外边
           # raise 'invalid face detected'

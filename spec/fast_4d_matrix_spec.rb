@@ -7,6 +7,12 @@ RSpec.describe Fast4DMatrix do
     expect(vec3.to_a).to eq([1.0, 2.0, 3.0])
   end
 
+  it 'can get middle point' do
+    vec1 = Fast4DMatrix::Vec3.from_a(1.0, 2.0, 3.0)
+    vec2 = Fast4DMatrix::Vec3.from_a(4.0, 5.0, 6.0)
+    expect(vec1.mid(vec2).to_a).to eq([2.5, 3.5, 4.5])
+  end
+
   it 'can create zero matrix' do
     zero = Fast4DMatrix::Matrix4Sym.zero
     expect(zero.to_a).to eq(Array.new(4) { Array.new(4, 0) })
@@ -75,6 +81,7 @@ RSpec.describe Fast4DMatrix do
   #  expect(v2.line?(v3, v1)).to be_truthy
   #  expect(v3.line?(v2, v1)).to be_truthy
   #end
+
   it 'can check verteces not on the same line' do
     v1 = Fast4DMatrix::Vec3.from_a(0.0, 2.0, 0.0)
     v2 = Fast4DMatrix::Vec3.from_a(1.0, 0.0, 0.0)
@@ -84,4 +91,14 @@ RSpec.describe Fast4DMatrix do
     #expect(v2.line?(v3, v1)).to be_falsey
     #expect(v3.line?(v2, v1)).to be_falsey
   end
+
+  it 'can solve linear equ' do
+    mat1 = Fast4DMatrix::Matrix4Sym.from_vec4(1.0, 1.0, 1.0, 1.0)
+    mat2 = Fast4DMatrix::Matrix4Sym.from_vec4(2.0, 4.0, 8.0, 1.0)
+    mat3 = Fast4DMatrix::Matrix4Sym.from_vec4(3.0, 2.0, 1.0, 1.0)
+    mat1.add!(mat2)
+    mat1.add!(mat3)
+    expect(mat1.get_best_vertex.to_a).to eq([3.5, -7, 2.5])
+  end
+
 end

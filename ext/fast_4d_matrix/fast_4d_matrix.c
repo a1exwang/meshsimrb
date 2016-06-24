@@ -11,6 +11,7 @@ void Init_fast_4d_matrix();
 VALUE Vec3_singleton_method_from_a(VALUE self, VALUE rbx, VALUE rby, VALUE rbz);
 VALUE Vec3_method_to_a(VALUE self);
 VALUE Vec3_method_line_question(VALUE self, VALUE v2, VALUE v3);
+VALUE Vec3_method_mid(VALUE self, VALUE other);
 
 VALUE Matrix4Sym_class_method_zero(VALUE clazz);
 VALUE Matrix4Sym_class_method_from_vec4(VALUE clazz, VALUE a, VALUE b, VALUE c, VALUE d);
@@ -18,6 +19,7 @@ VALUE Matrix4Sym_class_method_from_face(VALUE clazz, VALUE v1, VALUE v2, VALUE v
 VALUE Matrix4Sym_method_to_a(VALUE self);
 VALUE Matrix4Sym_method_delta(VALUE self, VALUE vec);
 VALUE Matrix4Sym_method_add_bang(VALUE self, VALUE other);
+VALUE Matrix4Sym_method_get_best_vertex(VALUE self);
 
 void Init_fast_4d_matrix() {
   Fast4DMatrix = rb_define_module("Fast4DMatrix");
@@ -26,6 +28,7 @@ void Init_fast_4d_matrix() {
   rb_define_singleton_method(Vec3, "from_a", Vec3_singleton_method_from_a, 3);
   rb_define_method(Vec3, "to_a", Vec3_method_to_a, 0);
   rb_define_method(Vec3, "line?", Vec3_method_line_question, 2);
+  rb_define_method(Vec3, "mid", Vec3_method_mid, 1);
 
   Matrix4Sym = rb_define_class_under(Fast4DMatrix, "Matrix4Sym", rb_cObject);
   rb_define_singleton_method(Matrix4Sym, "zero", Matrix4Sym_class_method_zero, 0);
@@ -34,6 +37,7 @@ void Init_fast_4d_matrix() {
   rb_define_method(Matrix4Sym, "to_a", Matrix4Sym_method_to_a, 0);
   rb_define_method(Matrix4Sym, "delta", Matrix4Sym_method_delta, 1);
   rb_define_method(Matrix4Sym, "add!", Matrix4Sym_method_add_bang, 1);
+  rb_define_method(Matrix4Sym, "get_best_vertex", Matrix4Sym_method_get_best_vertex, 0);
 }
 
 typedef struct TVec3Type {
@@ -89,6 +93,21 @@ VALUE Vec3_method_to_a(VALUE self) {
   return ret;
 }
 
+VALUE Vec3_method_mid(VALUE self, VALUE other) {
+  Vec3Type *v1;
+  Data_Get_Struct(self, Vec3Type, v1);
+  Vec3Type *v2;
+  Data_Get_Struct(other, Vec3Type, v2);
+  
+  double x = (v1->values[0] + v2->values[0]) / 2; 
+  double y = (v1->values[1] + v2->values[1]) / 2; 
+  double z = (v1->values[2] + v2->values[2]) / 2; 
+
+  return rb_funcall(Vec3, rb_intern("from_a"), 3, 
+      rb_float_new(x), 
+      rb_float_new(y), 
+      rb_float_new(z));
+}
 #define TMatrix4SymType_KPS_COUNT 16
 typedef struct TMatrix4SymType {
   double kps[TMatrix4SymType_KPS_COUNT];
@@ -297,4 +316,54 @@ VALUE Vec3_method_line_question(VALUE self, VALUE v2, VALUE v3) {
     (dx1 * dy1 - dy1 * dx2 == 0);
 
   return result ? Qtrue : Qfalse;
+}
+
+VALUE Matrix4Sym_method_get_best_vertex(VALUE self) {
+  Matrix4SymType *matObj;
+  Data_Get_Struct(self, Matrix4SymType, matObj);
+
+  double d = 
+    matObj->kps[0] * matObj->kps[5] * matObj->kps[10] 
+    + matObj->kps[1] * matObj->kps[6] * matObj->kps[8]
+    + matObj->kps[4] * matObj->kps[9] * matObj->kps[2]
+    - matObj->kps[2] * matObj->kps[5] * matObj->kps[8]
+    - matObj->kps[1] * matObj->kps[4] * matObj->kps[10]
+    - matObj->kps[6] * matObj->kps[9] * matObj->kps[0];
+
+  //for (int i = 0; i < 16; ++i) {
+  //  fprintf(stderr, "%f, ", matObj->kps[i]);
+  //}
+  //fprintf(stderr, "\n");
+
+  if (d == 0)
+    return Qnil;
+
+  double d0 = 
+    matObj->kps[3] * matObj->kps[5] * matObj->kps[10] 
+    + matObj->kps[1] * matObj->kps[6] * matObj->kps[11]
+    + matObj->kps[7] * matObj->kps[9] * matObj->kps[2]
+    - matObj->kps[2] * matObj->kps[5] * matObj->kps[11]
+    - matObj->kps[1] * matObj->kps[7] * matObj->kps[10]
+    - matObj->kps[6] * matObj->kps[9] * matObj->kps[3];
+
+  double d1 = 
+    matObj->kps[0] * matObj->kps[7] * matObj->kps[10] 
+    + matObj->kps[3] * matObj->kps[6] * matObj->kps[8]
+    + matObj->kps[4] * matObj->kps[11] * matObj->kps[2]
+    - matObj->kps[2] * matObj->kps[7] * matObj->kps[8]
+    - matObj->kps[3] * matObj->kps[4] * matObj->kps[10]
+    - matObj->kps[6] * matObj->kps[11] * matObj->kps[0];
+  
+  double d2 = 
+    matObj->kps[0] * matObj->kps[5] * matObj->kps[11] 
+    + matObj->kps[1] * matObj->kps[7] * matObj->kps[8]
+    + matObj->kps[4] * matObj->kps[9] * matObj->kps[3]
+    - matObj->kps[3] * matObj->kps[5] * matObj->kps[8]
+    - matObj->kps[1] * matObj->kps[4] * matObj->kps[11]
+    - matObj->kps[7] * matObj->kps[9] * matObj->kps[0];
+
+  return rb_funcall(Vec3, rb_intern("from_a"), 3, 
+      rb_float_new(- d0 / d),
+      rb_float_new(- d1 / d),
+      rb_float_new(- d2 / d)); 
 }

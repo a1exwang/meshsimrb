@@ -3,6 +3,7 @@ module Fast4DMatrix
     # method stub
     def self.from_a(a, b, c); raise NotImplementedError; end
     def to_a; raise NotImplementedError; end
+    def mid(other); raise NotImplementedError; end
   end
   class Matrix4Sym
     # method stub
