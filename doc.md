@@ -39,4 +39,25 @@
 4. 运行方法
     - ruby -i infile_path -o outfile_path -r rate -s 
     - infile_path输入obj, outfile_path 输出obj, rate简化率(0, 1\], -s silent mode防止调试用的输出太费时间
-1. 光线跟踪
+
+### 光线跟踪 version 1
+
+1. 实现了一下功能
+    - 面, 球, box
+    - 镜面反射, 漫反射, 折射
+    - 平面球面贴图
+    - 景深, 抗锯齿
+    - 软阴影
+    - 在某些情况(比如某一点只有ambient的情况则采用蒙特卡洛方法随机产生光线求diffuse)
+2. 结果图
+    - ![im1](images/image-big-near.png)
+
+### 路径追踪 version 2
+
+1. 后来由于version 1是用ruby写的, 不但慢而且对多线程的支持还不好, 所以改用C++利用OpenCV写了第二版的蒙特卡洛路径追踪
+    - 具体实现是
+        - 对于一条光线, 和物体object交于一点, 按照物体的属性, 按照一定概率发生镜面反射, 折射, 漫反射.
+        - 其中镜面反射和折射的方向是确定的. 漫反射方向以法向为中心, 按照俯仰角theta, 做一个costheta分布.
+        
+2. 结果图
+    - ![im1](images/path_tracing_600x600_30000.png)
