@@ -1,0 +1,72 @@
+# Shown below are some global variables, you could use it in all scripts.
+# $PLATFORM: platform to build sdk(e.g. linux)
+# $CONFIG: config to build sdk(e.g. full)
+# $BUILD_OPTS: options to build(e.g. --cfg="xxx")
+language: cpp
+platform:
+        windows:
+                env: windows
+                build:
+                        scripts:
+                                - echo "Building Windows"
+                                - rm -rf install target deps
+                                - cppbuild env
+                                - cppbuild dep $BUILD_OPTS
+                                - TARGET_ARCH=x86_64 cppbuild build --build-type=release --install
+                                - TARGET_ARCH=x86 cppbuild build --build-type=release --install
+                                - rake package
+        linux:
+                env: linux
+                build:
+                        scripts:
+                                - echo "Building Linux"
+                                - rm -rf install target deps
+                                - cppbuild env
+                                - cppbuild dep $BUILD_OPTS
+                                - cppbuild build --build-type=release --install
+                                  #- TARGET_ARCH=x86 cppbuild build --build-type=release --install
+                                - TARGET_ARCH=armv7 cppbuild build --build-type=release --install
+                                - rake package
+        android:
+                env: linux
+                build:
+                        scripts:
+                                - echo "Building Android"
+                                - rm -rf install target deps
+                                - cppbuild env
+                                - cppbuild dep $BUILD_OPTS
+                                - TARGET_OS=android TARGET_ARCH=armv7 cppbuild build --build-type=release --install
+                                - TARGET_OS=android TARGET_ARCH=aarch64 cppbuild build --build-type=release --install
+                                  #- TARGET_OS=android TARGET_ARCH=x86 cppbuild build --build-type=release --install
+                                - rake package
+        ios:
+                env: darwin
+                build:
+                        scripts:
+                                - echo "Building iOS"
+                                - rm -rf install target deps
+                                - cppbuild env
+                                - cppbuild dep $BUILD_OPTS
+                                - TARGET_OS=ios_os TARGET_ARCH=universal cppbuild build --build-type=release --install
+                                  #- TARGET_OS=ios_sim TARGET_ARCH=universal cppbuild build --build-type=release --install
+                                - rake package
+config:
+        ppl:
+                platforms:
+                        - platform: windows
+                          default: true
+                        - platform: linux
+                          default: true
+                        - platform: android
+                        - platform: ios
+                options: ""
+        caffe:
+                platforms:
+                        - platform: windows
+                          default: true
+                        - platform: linux
+                          default: true
+                        - platform: android
+                        - platform: ios
+                options: "--cfg='-use_ppl'"
+
